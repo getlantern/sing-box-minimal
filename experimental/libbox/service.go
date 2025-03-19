@@ -10,7 +10,16 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sagernet/sing-box"
+	tun "github.com/sagernet/sing-tun"
+	"github.com/sagernet/sing/common"
+	"github.com/sagernet/sing/common/control"
+	E "github.com/sagernet/sing/common/exceptions"
+	"github.com/sagernet/sing/common/logger"
+	N "github.com/sagernet/sing/common/network"
+	"github.com/sagernet/sing/service"
+	"github.com/sagernet/sing/service/pause"
+
+	box "github.com/sagernet/sing-box"
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/process"
 	"github.com/sagernet/sing-box/common/urltest"
@@ -20,14 +29,6 @@ import (
 	"github.com/sagernet/sing-box/experimental/libbox/platform"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
-	"github.com/sagernet/sing-tun"
-	"github.com/sagernet/sing/common"
-	"github.com/sagernet/sing/common/control"
-	E "github.com/sagernet/sing/common/exceptions"
-	"github.com/sagernet/sing/common/logger"
-	N "github.com/sagernet/sing/common/network"
-	"github.com/sagernet/sing/service"
-	"github.com/sagernet/sing/service/pause"
 )
 
 type BoxService struct {
