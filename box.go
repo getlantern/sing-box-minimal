@@ -526,3 +526,7 @@ func (s *Box) Inbound() adapter.InboundManager {
 func (s *Box) Outbound() adapter.OutboundManager {
 	return s.outbound
 }
+
+func (s *Box) LogFactory() log.Factory {
+	return s.logFactory
+}
