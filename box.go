@@ -8,13 +8,6 @@ import (
 	"runtime/debug"
 	"time"
 
-	"github.com/sagernet/sing/common"
-	E "github.com/sagernet/sing/common/exceptions"
-	F "github.com/sagernet/sing/common/format"
-	"github.com/sagernet/sing/common/ntp"
-	"github.com/sagernet/sing/service"
-	"github.com/sagernet/sing/service/pause"
-
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/endpoint"
 	"github.com/sagernet/sing-box/adapter/inbound"
@@ -30,6 +23,12 @@ import (
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-box/protocol/direct"
 	"github.com/sagernet/sing-box/route"
+	"github.com/sagernet/sing/common"
+	E "github.com/sagernet/sing/common/exceptions"
+	F "github.com/sagernet/sing/common/format"
+	"github.com/sagernet/sing/common/ntp"
+	"github.com/sagernet/sing/service"
+	"github.com/sagernet/sing/service/pause"
 )
 
 var _ adapter.Service = (*Box)(nil)
