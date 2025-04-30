@@ -3,7 +3,6 @@ package rule
 import (
 	"context"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 
@@ -56,7 +55,7 @@ func NewLocalRuleSet(ctx context.Context, logger logger.Logger, options option.R
 		}
 	} else {
 		filePath := filemanager.BasePath(ctx, options.LocalOptions.Path)
-		filePath, _ = filepath.Abs(filePath)
+		//filePath, _ = filepath.Abs(filePath)
 		err := ruleSet.reloadFile(filePath)
 		if err != nil {
 			return nil, err
