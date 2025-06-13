@@ -23,6 +23,6 @@ jobs:
           # The name of the branch you want the changes pulled into.
           base: lantern-main
           merge_method: merge
-          auto_merge: false
+          auto_merge: true
           pr_title: 'Automated Fork Sync from Upstream'
           pr_message: 'This pull request was automatically generated to sync the `lantern-main` branch with the `main` branch from `sagernet/sing-box`.'
