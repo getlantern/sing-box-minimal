@@ -20,7 +20,6 @@ import (
 	"github.com/sagernet/sing/service/pause"
 	"github.com/sagernet/wireguard-go/conn"
 	"github.com/sagernet/wireguard-go/device"
-	"github.com/sagernet/wireguard-go/ipc"
 
 	"go4.org/netipx"
 )
@@ -142,10 +141,6 @@ func (e *Endpoint) Start(resolve bool) error {
 	} else if resolve {
 		return nil
 	}
-	fileUAPI, uapiErr := ipc.UAPIOpen(e.options.Name)
-	if uapiErr != nil {
-		return fmt.Errorf("failed to open UAPI socket for %s: %w", e.options.Name, uapiErr)
-	}
 
 	var bind conn.Bind
 	wgListener, isWgListener := common.Cast[conn.Listener](e.options.Dialer)
@@ -185,7 +180,7 @@ func (e *Endpoint) Start(resolve bool) error {
 	}
 	wgDevice := device.NewDevice(e.options.Context, e.tunDevice, bind, logger, e.options.Workers)
 
-	uapi, err := ipc.UAPIListen(e.options.Name, fileUAPI)
+	uapi, err := uapiListen(e.options.Name)
 	if err != nil {
 		return fmt.Errorf("failed to listen on UAPI socket: %v", err)
 	}
