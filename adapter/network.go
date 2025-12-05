@@ -20,6 +20,7 @@ type NetworkManager interface {
 	DefaultOptions() NetworkOptions
 	RegisterAutoRedirectOutputMark(mark uint32) error
 	AutoRedirectOutputMark() uint32
+	AutoRedirectOutputMarkFunc() control.Func
 	NetworkMonitor() tun.NetworkUpdateMonitor
 	InterfaceMonitor() tun.DefaultInterfaceMonitor
 	PackageManager() tun.PackageManager
@@ -29,12 +30,14 @@ type NetworkManager interface {
 }
 
 type NetworkOptions struct {
-	NetworkStrategy     *C.NetworkStrategy
-	NetworkType         []C.InterfaceType
-	FallbackNetworkType []C.InterfaceType
-	FallbackDelay       time.Duration
-	BindInterface       string
-	RoutingMark         uint32
+	BindInterface        string
+	RoutingMark          uint32
+	DomainResolver       string
+	DomainResolveOptions DNSQueryOptions
+	NetworkStrategy      *C.NetworkStrategy
+	NetworkType          []C.InterfaceType
+	FallbackNetworkType  []C.InterfaceType
+	FallbackDelay        time.Duration
 }
 
 type InterfaceUpdateListener interface {

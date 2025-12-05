@@ -50,7 +50,7 @@ type Outbound struct {
 }
 
 func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.SSHOutboundOptions) (adapter.Outbound, error) {
-	outboundDialer, err := dialer.New(ctx, options.DialerOptions)
+	outboundDialer, err := dialer.New(ctx, options.DialerOptions, options.ServerIsDomain())
 	if err != nil {
 		return nil, err
 	}
@@ -180,7 +180,6 @@ func (s *Outbound) connect() (*ssh.Client, error) {
 
 func (s *Outbound) InterfaceUpdated() {
 	common.Close(s.clientConn)
-	return
 }
 
 func (s *Outbound) Close() error {

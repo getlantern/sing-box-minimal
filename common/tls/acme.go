@@ -7,16 +7,17 @@ import (
 	"crypto/tls"
 	"strings"
 
+	E "github.com/sagernet/sing/common/exceptions"
+	"github.com/sagernet/sing/common/logger"
+
 	"github.com/sagernet/sing-box/adapter"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
-	E "github.com/sagernet/sing/common/exceptions"
-	"github.com/sagernet/sing/common/logger"
 
 	"github.com/caddyserver/certmagic"
 	"github.com/libdns/alidns"
 	"github.com/libdns/cloudflare"
-	"github.com/mholt/acmez/acme"
+	"github.com/mholt/acmez/v3/acme"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -68,7 +69,7 @@ func encoderConfig() zapcore.EncoderConfig {
 	return config
 }
 
-func startACME(ctx context.Context, logger logger.Logger, options option.InboundACMEOptions) (*tls.Config, adapter.Service, error) {
+func startACME(ctx context.Context, logger logger.Logger, options option.InboundACMEOptions) (*tls.Config, adapter.SimpleLifecycle, error) {
 	var acmeServer string
 	switch options.Provider {
 	case "", "letsencrypt":
