@@ -5,11 +5,12 @@ import (
 	"net/netip"
 	"time"
 
+	M "github.com/sagernet/sing/common/metadata"
+
 	"github.com/sagernet/sing-box/common/process"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
-	M "github.com/sagernet/sing/common/metadata"
 )
 
 type Inbound interface {
@@ -57,6 +58,7 @@ type InboundContext struct {
 	Domain       string
 	Client       string
 	SniffContext any
+	SnifferNames []string
 	SniffError   error
 
 	// cache
@@ -72,13 +74,14 @@ type InboundContext struct {
 	UDPDisableDomainUnmapping bool
 	UDPConnect                bool
 	UDPTimeout                time.Duration
+	TLSFragment               bool
+	TLSFragmentFallbackDelay  time.Duration
+	TLSRecordFragment         bool
 
 	NetworkStrategy     *C.NetworkStrategy
 	NetworkType         []C.InterfaceType
 	FallbackNetworkType []C.InterfaceType
 	FallbackDelay       time.Duration
-
-	DNSServer string
 
 	DestinationAddresses []netip.Addr
 	SourceGeoIPCode      string
@@ -134,8 +137,7 @@ func ExtendContext(ctx context.Context) (context.Context, *InboundContext) {
 
 func OverrideContext(ctx context.Context) context.Context {
 	if metadata := ContextFrom(ctx); metadata != nil {
-		var newMetadata InboundContext
-		newMetadata = *metadata
+		newMetadata := *metadata
 		return WithContext(ctx, &newMetadata)
 	}
 	return ctx

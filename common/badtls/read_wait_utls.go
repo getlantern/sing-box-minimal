@@ -6,26 +6,31 @@ import (
 	"net"
 	_ "unsafe"
 
-	"github.com/sagernet/sing/common"
-	"github.com/sagernet/utls"
+	"github.com/metacubex/utls"
 )
 
 func init() {
 	tlsRegistry = append(tlsRegistry, func(conn net.Conn) (loaded bool, tlsReadRecord func() error, tlsHandlePostHandshakeMessage func() error) {
-		tlsConn, loaded := common.Cast[*tls.UConn](conn)
-		if !loaded {
-			return
+		switch tlsConn := conn.(type) {
+		case *tls.UConn:
+			return true, func() error {
+					return utlsReadRecord(tlsConn.Conn)
+				}, func() error {
+					return utlsHandlePostHandshakeMessage(tlsConn.Conn)
+				}
+		case *tls.Conn:
+			return true, func() error {
+					return utlsReadRecord(tlsConn)
+				}, func() error {
+					return utlsHandlePostHandshakeMessage(tlsConn)
+				}
 		}
-		return true, func() error {
-				return utlsReadRecord(tlsConn.Conn)
-			}, func() error {
-				return utlsHandlePostHandshakeMessage(tlsConn.Conn)
-			}
+		return
 	})
 }
 
-//go:linkname utlsReadRecord github.com/sagernet/utls.(*Conn).readRecord
+//go:linkname utlsReadRecord github.com/metacubex/utls.(*Conn).readRecord
 func utlsReadRecord(c *tls.Conn) error
 
-//go:linkname utlsHandlePostHandshakeMessage github.com/sagernet/utls.(*Conn).handlePostHandshakeMessage
+//go:linkname utlsHandlePostHandshakeMessage github.com/metacubex/utls.(*Conn).handlePostHandshakeMessage
 func utlsHandlePostHandshakeMessage(c *tls.Conn) error
