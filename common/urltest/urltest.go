@@ -2,13 +2,16 @@ package urltest
 
 import (
 	"context"
+	"crypto/tls"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"sync"
 	"time"
 
 	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing/common"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
@@ -73,7 +76,12 @@ func (s *HistoryStorage) Close() error {
 	return nil
 }
 
-func URLTest(ctx context.Context, link string, detour N.Dialer) (t uint16, err error) {
+func URLTest(ctx context.Context, link string, detour N.Dialer, log log.Logger, tag string) (t uint16, err error) {
+	logger := func(args ...any) {
+		if log != nil {
+			log.Debug(args...)
+		}
+	}
 	if link == "" {
 		link = "https://www.gstatic.com/generate_204"
 	}
@@ -105,6 +113,40 @@ func URLTest(ctx context.Context, link string, detour N.Dialer) (t uint16, err e
 	if err != nil {
 		return
 	}
+	trace := &httptrace.ClientTrace{
+		GotConn: func(connInfo httptrace.GotConnInfo) {
+			logger("URLTest::httptrace Got Conn", "info", connInfo, "tag", tag)
+		},
+		DNSDone: func(dnsInfo httptrace.DNSDoneInfo) {
+			logger("URLTest::httptrace DNS Info", "info", dnsInfo, "tag", tag)
+		},
+		ConnectDone: func(network, addr string, err error) {
+			if err != nil {
+				logger("URLTest::httptrace Connect Done", "network", network, "addr", addr, "tag", tag, "error", err)
+			} else {
+				logger("URLTest::httptrace Connect Done", "network", network, "addr", addr, "tag", tag)
+			}
+		},
+		TLSHandshakeStart: func() {
+			logger("URLTest::httptrace TLS Handshake Start", "tag", tag)
+		},
+		TLSHandshakeDone: func(state tls.ConnectionState, err error) {
+			if err != nil {
+				logger("URLTest::httptrace TLS Handshake Done", "tag", tag, "error", err)
+			} else {
+				logger("URLTest::httptrace TLS Handshake Done", "tag", tag)
+			}
+		},
+		WroteHeaders: func() {
+			logger("URLTest::httptrace Wrote Headers", "tag", tag)
+		},
+		GotFirstResponseByte: func() {
+			logger("URLTest::httptrace Got First Response Byte", "tag", tag)
+		},
+	}
+	req = req.WithContext(ctx)
+	req = req.WithContext(httptrace.WithClientTrace(req.Context(), trace))
+	logger("Sending request with timeout", "timeout", C.TCPTimeout, "tag", tag)
 	client := http.Client{
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -117,10 +159,11 @@ func URLTest(ctx context.Context, link string, detour N.Dialer) (t uint16, err e
 		Timeout: C.TCPTimeout,
 	}
 	defer client.CloseIdleConnections()
-	resp, err := client.Do(req.WithContext(ctx))
+	resp, err := client.Do(req)
 	if err != nil {
 		return
 	}
+	logger("URLTest::httptrace got full response", "status", resp.StatusCode, "tag", tag)
 	resp.Body.Close()
 	t = uint16(time.Since(start) / time.Millisecond)
 	return

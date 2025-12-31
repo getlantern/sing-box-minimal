@@ -202,7 +202,7 @@ func getProxyDelay(server *Server) func(w http.ResponseWriter, r *http.Request) 
 		ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*time.Duration(timeout))
 		defer cancel()
 
-		delay, err := urltest.URLTest(ctx, url, proxy)
+		delay, err := urltest.URLTest(ctx, url, proxy, server.logger, proxy.Tag())
 		defer func() {
 			realTag := group.RealTag(proxy)
 			if err != nil {

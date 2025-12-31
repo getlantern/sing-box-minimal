@@ -2,6 +2,8 @@ module github.com/sagernet/sing-box
 
 go 1.20
 
+replace github.com/sagernet/sing-quic => ../sing-quic
+
 require (
 	github.com/caddyserver/certmagic v0.20.0
 	github.com/cloudflare/circl v1.3.7

@@ -370,7 +370,7 @@ func (g *URLTestGroup) urlTest(ctx context.Context, force bool) (map[string]uint
 		b.Go(realTag, func() (any, error) {
 			testCtx, cancel := context.WithTimeout(g.ctx, C.TCPTimeout)
 			defer cancel()
-			t, err := urltest.URLTest(testCtx, g.link, p)
+			t, err := urltest.URLTest(testCtx, g.link, p, g.logger, tag)
 			if err != nil {
 				g.logger.Debug("outbound ", tag, " unavailable: ", err)
 				g.history.DeleteURLTestHistory(realTag)

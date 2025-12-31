@@ -94,7 +94,7 @@ func (h *Outbound) DialContext(ctx context.Context, network string, destination 
 	switch N.NetworkName(network) {
 	case N.NetworkTCP:
 		h.logger.InfoContext(ctx, "outbound connection to ", destination)
-		return h.client.DialConn(ctx, destination)
+		return h.client.DialConn(ctx, destination, h.logger)
 	case N.NetworkUDP:
 		conn, err := h.ListenPacket(ctx, destination)
 		if err != nil {
