@@ -46,8 +46,7 @@ func HandleStreamDNSRequest(ctx context.Context, router adapter.DNSRouter, conn 
 			conn.Close()
 			return err
 		}
-		responseLength := response.Len()
-		responseBuffer := buf.NewSize(3 + responseLength)
+		responseBuffer := buf.NewPacket()
 		defer responseBuffer.Release()
 		responseBuffer.Resize(2, 0)
 		n, err := response.PackBuffer(responseBuffer.FreeBytes())

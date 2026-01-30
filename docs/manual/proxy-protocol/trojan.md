@@ -4,7 +4,8 @@ icon: material/horse
 
 # Trojan
 
-Trojan is the most commonly used TLS proxy made in China. It can be used in various combinations.
+Torjan is the most commonly used TLS proxy made in China. It can be used in various combinations,
+but only the combination of uTLS and multiplexing is recommended.
 
 | Protocol and implementation combination | Specification                                                        | Resists passive detection | Resists active probes |
 |-----------------------------------------|----------------------------------------------------------------------|---------------------------|-----------------------|
@@ -139,7 +140,11 @@ Trojan is the most commonly used TLS proxy made in China. It can be used in vari
           "password": "password",
           "tls": {
             "enabled": true,
-            "server_name": "example.org"
+            "server_name": "example.org",
+            "utls": {
+              "enabled": true,
+              "fingerprint": "firefox"
+            }
           },
           "multiplex": {
             "enabled": true
@@ -166,7 +171,11 @@ Trojan is the most commonly used TLS proxy made in China. It can be used in vari
           "tls": {
             "enabled": true,
             "server_name": "example.org",
-            "certificate_path": "/path/to/certificate.pem"
+            "certificate_path": "/path/to/certificate.pem",
+            "utls": {
+              "enabled": true,
+              "fingerprint": "firefox"
+            }
           },
           "multiplex": {
             "enabled": true
@@ -189,7 +198,11 @@ Trojan is the most commonly used TLS proxy made in China. It can be used in vari
           "tls": {
             "enabled": true,
             "server_name": "example.org",
-            "insecure": true
+            "insecure": true,
+            "utls": {
+              "enabled": true,
+              "fingerprint": "firefox"
+            }
           },
           "multiplex": {
             "enabled": true

@@ -303,6 +303,8 @@ find:
 	metadata.Protocol = C.ProtocolQUIC
 	fingerprint, err := ja3.Compute(buffer.Bytes())
 	if err != nil {
+		metadata.Protocol = C.ProtocolQUIC
+		metadata.Client = C.ClientChromium
 		metadata.SniffContext = fragments
 		return E.Cause1(ErrNeedMoreData, err)
 	}
@@ -332,7 +334,7 @@ find:
 		}
 
 		if count(frameTypeList, frameTypeCrypto) > 1 || count(frameTypeList, frameTypePing) > 0 {
-			if isQUICGo(fingerprint) {
+			if maybeUQUIC(fingerprint) {
 				metadata.Client = C.ClientQUICGo
 			} else {
 				metadata.Client = C.ClientChromium

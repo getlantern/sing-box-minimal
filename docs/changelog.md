@@ -2,54 +2,6 @@
 icon: material/alert-decagram
 ---
 
-#### 1.12.18
-
-* Add fallback routing rule for `auto_redirect` **1**
-* Fixes and improvements
-
-**1**:
-
-Adds a fallback iproute2 rule checked after system default rules (32766: main, 32767: default),
-ensuring traffic is routed to the sing-box table when no route is found in system tables.
-
-The rule index can be customized via `auto_redirect_iproute2_fallback_rule_index` (default: 32768).
-
-#### 1.12.17
-
-* Update uTLS to v1.8.2 **1**
-* Fixes and improvements
-
-**1**:
-
-This update fixes missing padding extension for Chrome 120+ fingerprints.
-
-Also, documentation has been updated with a warning about uTLS fingerprinting vulnerabilities.
-uTLS is not recommended for censorship circumvention due to fundamental architectural limitations;
-use NaiveProxy instead for TLS fingerprint resistance.
-
-#### 1.12.16
-
-* Fixes and improvements
-
-#### 1.12.15
-
-* Fixes and improvements
-
-#### 1.12.14
-
-* Fixes and improvements
-
-#### 1.12.13
-
-* Fix naive inbound
-* Fixes and improvements
-
-__Unfortunately, for non-technical reasons, we are currently unable to notarize the standalone version of the macOS client:
-because system extensions require signatures to function, we have had to temporarily halt its release.__
-
-__We plan to fix the App Store release issue and launch a new standalone desktop client, but until then,
-only clients on TestFlight will be available (unless you have an Apple Developer Program and compile from source code).__
-
 #### 1.12.12
 
 * Fixes and improvements

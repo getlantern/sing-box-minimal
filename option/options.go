@@ -5,7 +5,6 @@ import (
 	"context"
 
 	E "github.com/sagernet/sing/common/exceptions"
-	F "github.com/sagernet/sing/common/format"
 	"github.com/sagernet/sing/common/json"
 )
 
@@ -61,40 +60,37 @@ func checkOptions(options *Options) error {
 
 func checkInbounds(inbounds []Inbound) error {
 	seen := make(map[string]bool)
-	for i, inbound := range inbounds {
-		tag := inbound.Tag
-		if tag == "" {
-			tag = F.ToString(i)
+	for _, inbound := range inbounds {
+		if inbound.Tag == "" {
+			continue
 		}
-		if seen[tag] {
-			return E.New("duplicate inbound tag: ", tag)
+		if seen[inbound.Tag] {
+			return E.New("duplicate inbound tag: ", inbound.Tag)
 		}
-		seen[tag] = true
+		seen[inbound.Tag] = true
 	}
 	return nil
 }
 
 func checkOutbounds(outbounds []Outbound, endpoints []Endpoint) error {
 	seen := make(map[string]bool)
-	for i, outbound := range outbounds {
-		tag := outbound.Tag
-		if tag == "" {
-			tag = F.ToString(i)
+	for _, outbound := range outbounds {
+		if outbound.Tag == "" {
+			continue
 		}
-		if seen[tag] {
-			return E.New("duplicate outbound/endpoint tag: ", tag)
+		if seen[outbound.Tag] {
+			return E.New("duplicate outbound/endpoint tag: ", outbound.Tag)
 		}
-		seen[tag] = true
+		seen[outbound.Tag] = true
 	}
-	for i, endpoint := range endpoints {
-		tag := endpoint.Tag
-		if tag == "" {
-			tag = F.ToString(i)
+	for _, endpoint := range endpoints {
+		if endpoint.Tag == "" {
+			continue
 		}
-		if seen[tag] {
-			return E.New("duplicate outbound/endpoint tag: ", tag)
+		if seen[endpoint.Tag] {
+			return E.New("duplicate outbound/endpoint tag: ", endpoint.Tag)
 		}
-		seen[tag] = true
+		seen[endpoint.Tag] = true
 	}
 	return nil
 }

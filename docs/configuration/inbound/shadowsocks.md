@@ -9,7 +9,6 @@
 
   "method": "2022-blake3-aes-128-gcm",
   "password": "8JCsPssfgS8tiRwiMlhARg==",
-  "managed": false,
   "multiplex": {}
 }
 ```
@@ -86,10 +85,6 @@ Both if empty.
 | none          | /                                              |
 | 2022 methods  | `sing-box generate rand --base64 <Key Length>` |
 | other methods | any string                                     |
-
-#### managed
-
-Defaults to `false`. Enable this when the inbound is managed by the [SSM API](/configuration/service/ssm-api) for dynamic user.
 
 #### multiplex
 
