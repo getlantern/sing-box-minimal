@@ -291,8 +291,6 @@ func TestUpdateDefaultInterface_Deduplication(t *testing.T) {
 	mon.updateDefaultInterface("wlan0", 16, false, false)
 
 	// Callbacks should NOT fire because the interface didn't change.
-	// Give a brief window in case of async issues.
-	time.Sleep(10 * time.Millisecond)
 	if rec.count() != 0 {
 		t.Errorf("expected 0 callback invocations (dedup), got %d", rec.count())
 	}
