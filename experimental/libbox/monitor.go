@@ -1,6 +1,8 @@
 package libbox
 
 import (
+	"net"
+
 	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common/control"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -88,9 +90,17 @@ func (m *platformDefaultInterfaceMonitor) updateDefaultInterface(interfaceName s
 	oldInterface := m.defaultInterface
 	newInterface, err := m.networkManager.InterfaceFinder().ByIndex(int(interfaceIndex32))
 	if err != nil {
-		m.defaultInterfaceAccess.Unlock()
-		m.logger.Error(E.Cause(err, "find updated interface: ", interfaceName))
-		return
+		// The platform reported this interface as the default, but InterfaceFinder
+		// doesn't know about it. This commonly happens with VPN-created TUN
+		// interfaces on Android: the connectivity callback reports tun0 as the
+		// default interface, but GetInterfaces() only returns physical interfaces.
+		// Fall back to constructing the interface from the callback parameters.
+		m.logger.Debug(E.Cause(err, "find updated interface: ", interfaceName, ", using callback parameters as fallback"))
+		newInterface = &control.Interface{
+			Index: int(interfaceIndex32),
+			Name:  interfaceName,
+			Flags: net.FlagUp,
+		}
 	}
 	m.defaultInterface = newInterface
 	if oldInterface != nil && oldInterface.Name == m.defaultInterface.Name && oldInterface.Index == m.defaultInterface.Index {
