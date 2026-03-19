@@ -82,13 +82,8 @@ func (m *ConnectionManager) NewConnection(ctx context.Context, this N.Dialer, co
 		m.logger.ErrorContext(ctx, err)
 		return
 	}
-	err = N.ReportConnHandshakeSuccess(conn, remoteConn)
-	if err != nil {
-		err = E.Cause(err, "report handshake success")
-		remoteConn.Close()
-		N.CloseOnHandshakeFailure(conn, onClose, err)
-		m.logger.ErrorContext(ctx, err)
-		return
+	if err = N.ReportConnHandshakeSuccess(conn, remoteConn); err != nil {
+		m.logger.ErrorContext(ctx, E.Cause(err, "report handshake success"))
 	}
 	if metadata.TLSFragment || metadata.TLSRecordFragment {
 		remoteConn = tf.NewConn(remoteConn, ctx, metadata.TLSFragment, metadata.TLSRecordFragment, metadata.TLSFragmentFallbackDelay)
@@ -169,12 +164,8 @@ func (m *ConnectionManager) NewPacketConnection(ctx context.Context, this N.Dial
 			return
 		}
 	}
-	err = N.ReportPacketConnHandshakeSuccess(conn, remotePacketConn)
-	if err != nil {
-		conn.Close()
-		remotePacketConn.Close()
+	if err = N.ReportPacketConnHandshakeSuccess(conn, remotePacketConn); err != nil {
 		m.logger.ErrorContext(ctx, "report handshake success: ", err)
-		return
 	}
 	if destinationAddress.IsValid() {
 		var originDestination M.Socksaddr
