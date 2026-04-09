@@ -110,7 +110,7 @@ func (s *RemoteRuleSet) StartContext(ctx context.Context, startContext *adapter.
 			// Non-fatal: on Android the network interface may not be available
 			// during VPN initialization. Start without rule-sets and retry in
 			// PostStart after the tunnel is connected.
-			s.logger.Warn("initial rule-set fetch failed, will retry after start: ", s.options.Tag, ": ", err)
+			s.logger.Warn("initial rule-set fetch failed, will retry after start", "tag", s.options.Tag, "error", err)
 		}
 	}
 	s.updateTicker = time.NewTicker(s.updateInterval)
@@ -123,7 +123,7 @@ func (s *RemoteRuleSet) PostStart() error {
 		// tunnel is up and the network interface is available.
 		go func() {
 			if err := s.fetch(s.ctx, nil); err != nil {
-				s.logger.Error("post-start rule-set fetch failed: ", s.options.Tag, ": ", err)
+				s.logger.Error("post-start rule-set fetch failed", "tag", s.options.Tag, "error", err)
 				// Set lastUpdated so loopUpdate doesn't immediately re-fetch
 				// (time.Since(zero) is huge → instant retry → log spam).
 				s.lastUpdated = time.Now()
