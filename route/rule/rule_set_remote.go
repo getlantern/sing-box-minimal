@@ -124,6 +124,9 @@ func (s *RemoteRuleSet) PostStart() error {
 		go func() {
 			if err := s.fetch(s.ctx, nil); err != nil {
 				s.logger.Error("post-start rule-set fetch failed: ", s.options.Tag, ": ", err)
+				// Set lastUpdated so loopUpdate doesn't immediately re-fetch
+				// (time.Since(zero) is huge → instant retry → log spam).
+				s.lastUpdated = time.Now()
 			}
 			s.loopUpdate()
 		}()
