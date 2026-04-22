@@ -145,6 +145,21 @@ func (r *NetworkManager) Start(stage adapter.StartStage) error {
 			if err != nil {
 				return err
 			}
+			// Seed the interface list synchronously from the platform on
+			// platform-backed monitors (Android/iOS). Without this, the
+			// NetworkManager only learns about interfaces via the platform's
+			// change callback — but on Android the ConnectivityManager
+			// NetworkCallback does not fire onAvailable for networks that
+			// were already connected before the callback was registered.
+			// Result: after a VPN stop→start cycle wlan0/ccmni are absent
+			// from the interface list, so outbound/direct dials fail with
+			// "no available network interface" until some unrelated network
+			// event finally triggers an update. See Freshdesk #173507.
+			if r.platformInterface != nil {
+				if err := r.UpdateInterfaces(); err != nil {
+					r.logger.Warn("initial interface seed: ", err)
+				}
+			}
 		}
 	case adapter.StartStateStart:
 		if runtime.GOOS == "windows" {
