@@ -2,6 +2,8 @@ package outbound
 
 import (
 	"context"
+	"maps"
+	"slices"
 	"sync"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -69,4 +71,10 @@ func (r *Registry) register(outboundType string, optionsConstructor optionsConst
 	defer r.access.Unlock()
 	r.optionsType[outboundType] = optionsConstructor
 	r.constructors[outboundType] = constructor
+}
+
+func (r *Registry) Registered() []string {
+	r.access.Lock()
+	defer r.access.Unlock()
+	return slices.Collect(maps.Keys(r.constructors))
 }
