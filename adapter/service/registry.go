@@ -74,5 +74,7 @@ func (m *Registry) register(outboundType string, optionsConstructor optionsConst
 }
 
 func (m *Registry) Registered() []string {
+	m.access.Lock()
+	defer m.access.Unlock()
 	return slices.Collect(maps.Keys(m.constructor))
 }
