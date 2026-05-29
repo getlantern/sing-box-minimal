@@ -15,6 +15,7 @@ type Service interface {
 
 type ServiceRegistry interface {
 	option.ServiceOptionsRegistry
+	Registry
 	Create(ctx context.Context, logger log.ContextLogger, tag string, serviceType string, options any) (Service, error)
 }
 

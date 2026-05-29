@@ -2,6 +2,8 @@ package dns
 
 import (
 	"context"
+	"maps"
+	"slices"
 	"sync"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -69,4 +71,8 @@ func (r *TransportRegistry) register(transportType string, optionsConstructor op
 	defer r.access.Unlock()
 	r.optionsType[transportType] = optionsConstructor
 	r.constructors[transportType] = constructor
+}
+
+func (r *TransportRegistry) Registered() []string {
+	return slices.Collect(maps.Keys(r.constructors))
 }
