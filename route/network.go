@@ -270,6 +270,12 @@ func (r *NetworkManager) UpdateInterfaces() error {
 			return it.Flags&net.FlagUp != 0
 		})
 		r.networkInterfaces.Store(newInterfaces)
+		// [ifdbg] temporary: log every UpdateInterfaces incl. empty results, since the
+		// production log below suppresses empty stores. Remove after diagnosis.
+		r.logger.Info("[ifdbg] UpdateInterfaces raw=", len(interfaces), " up=", len(newInterfaces), " :: ",
+			strings.Join(common.Map(interfaces, func(it adapter.NetworkInterface) string {
+				return F.ToString(it.Name, "(idx=", it.Index, ",flags=", it.Flags.String(), ")")
+			}), ", "))
 		if len(newInterfaces) > 0 && !slices.EqualFunc(oldInterfaces, newInterfaces, func(oldInterface adapter.NetworkInterface, newInterface adapter.NetworkInterface) bool {
 			return oldInterface.Interface.Index == newInterface.Interface.Index &&
 				oldInterface.Interface.Name == newInterface.Interface.Name &&
