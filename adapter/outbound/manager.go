@@ -168,8 +168,14 @@ func (m *Manager) Close() error {
 	outbounds := m.outbounds
 	m.outbounds = nil
 	// Keep the map in sync with the slice: leaving stale entries behind is
-	// what made Remove racing Close find a tag with no slice entry.
+	// what made Remove racing Close find a tag with no slice entry. The
+	// dependency bookkeeping goes with them. defaultOutbound is deliberately
+	// left alone: route dispatch dereferences Default() without a nil check
+	// (route/route.go), so in-flight connections racing shutdown must keep
+	// getting the stale-but-closed outbound (which fails at dial) rather
+	// than a nil (which would panic).
 	clear(m.outboundByTag)
+	clear(m.dependByTag)
 	m.access.Unlock()
 	var err error
 	for _, outbound := range outbounds {
@@ -220,11 +226,13 @@ func (m *Manager) Remove(tag string) error {
 	if index == -1 {
 		// Defense in depth: the tag is in the map but not the slice. No code
 		// path should produce this state (Close clears both together), but if
-		// it ever reappears, heal the stale map entry instead of panicking.
+		// it ever reappears, heal it instead of panicking — skip the slice
+		// splice and fall through so the rest of the bookkeeping (default
+		// outbound, dependency entries, close) still runs.
 		m.logger.Debug("outbound/", outbound.Type(), "[", tag, "] already removed from active list")
-		return nil
+	} else {
+		m.outbounds = append(m.outbounds[:index], m.outbounds[index+1:]...)
 	}
-	m.outbounds = append(m.outbounds[:index], m.outbounds[index+1:]...)
 	started := m.started
 	if m.defaultOutbound == outbound {
 		if len(m.outbounds) > 0 {
