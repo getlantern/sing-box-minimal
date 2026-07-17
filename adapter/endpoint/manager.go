@@ -103,10 +103,9 @@ func (m *Manager) Remove(tag string) error {
 	})
 	delete(m.endpointByTag, tag)
 	if index == -1 {
-		// Close() nils the endpoints slice but leaves endpointByTag populated,
-		// so a removal racing shutdown finds the tag with no slice entry. The
-		// endpoint is already closed (or being closed) by Close(); dropping
-		// the map entry is all that's left to do.
+		// Defense in depth: the tag is in the map but not the slice. No code
+		// path should produce this state (Close clears both together), but if
+		// it ever reappears, heal the stale map entry instead of panicking.
 		m.logger.Debug("endpoint/", endpoint.Type(), "[", tag, "] already removed from active list")
 		m.access.Unlock()
 		return nil

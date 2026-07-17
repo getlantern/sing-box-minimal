@@ -218,10 +218,9 @@ func (m *Manager) Remove(tag string) error {
 	})
 	delete(m.outboundByTag, tag)
 	if index == -1 {
-		// Close() nils the outbounds slice but leaves outboundByTag populated,
-		// so a removal racing shutdown finds the tag with no slice entry. The
-		// outbound is already closed (or being closed) by Close(); dropping
-		// the map entry is all that's left to do.
+		// Defense in depth: the tag is in the map but not the slice. No code
+		// path should produce this state (Close clears both together), but if
+		// it ever reappears, heal the stale map entry instead of panicking.
 		m.logger.Debug("outbound/", outbound.Type(), "[", tag, "] already removed from active list")
 		return nil
 	}
@@ -239,8 +238,17 @@ func (m *Manager) Remove(tag string) error {
 	if len(dependBy) > 0 {
 		return E.New("outbound[", tag, "] is depended by ", strings.Join(dependBy, ", "))
 	}
-	dependencies := outbound.Dependencies()
-	for _, dependency := range dependencies {
+	m.removeDependByEntriesLocked(outbound, tag)
+	if started {
+		return common.Close(outbound)
+	}
+	return nil
+}
+
+// removeDependByEntriesLocked drops tag from the dependBy lists of outbound's
+// dependencies. Callers must hold m.access.
+func (m *Manager) removeDependByEntriesLocked(outbound adapter.Outbound, tag string) {
+	for _, dependency := range outbound.Dependencies() {
 		if len(m.dependByTag[dependency]) == 1 {
 			delete(m.dependByTag, dependency)
 		} else {
@@ -249,10 +257,6 @@ func (m *Manager) Remove(tag string) error {
 			})
 		}
 	}
-	if started {
-		return common.Close(outbound)
-	}
-	return nil
 }
 
 func (m *Manager) Create(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, inboundType string, options any) error {
@@ -286,6 +290,9 @@ func (m *Manager) Create(ctx context.Context, router adapter.Router, logger log.
 		if existsIndex != -1 {
 			m.outbounds = append(m.outbounds[:existsIndex], m.outbounds[existsIndex+1:]...)
 		}
+		// The replacement may declare different dependencies; drop the old
+		// outbound's dependBy entries so stale ones can't block Remove later.
+		m.removeDependByEntriesLocked(existsOutbound, tag)
 	}
 	m.outbounds = append(m.outbounds, outbound)
 	m.outboundByTag[tag] = outbound
