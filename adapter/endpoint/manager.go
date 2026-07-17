@@ -63,6 +63,9 @@ func (m *Manager) Close() error {
 	m.started = false
 	endpoints := m.endpoints
 	m.endpoints = nil
+	// Keep the map in sync with the slice: leaving stale entries behind is
+	// what made Remove racing Close find a tag with no slice entry.
+	clear(m.endpointByTag)
 	monitor := taskmonitor.New(m.logger, C.StopTimeout)
 	var err error
 	for _, endpoint := range endpoints {
@@ -95,12 +98,17 @@ func (m *Manager) Remove(tag string) error {
 		m.access.Unlock()
 		return os.ErrInvalid
 	}
-	delete(m.endpointByTag, tag)
 	index := common.Index(m.endpoints, func(it adapter.Endpoint) bool {
 		return it == endpoint
 	})
+	delete(m.endpointByTag, tag)
 	if index == -1 {
-		panic("invalid endpoint index")
+		// Defense in depth: the tag is in the map but not the slice. No code
+		// path should produce this state (Close clears both together), but if
+		// it ever reappears, heal the stale map entry instead of panicking.
+		m.logger.Debug("endpoint/", endpoint.Type(), "[", tag, "] already removed from active list")
+		m.access.Unlock()
+		return nil
 	}
 	m.endpoints = append(m.endpoints[:index], m.endpoints[index+1:]...)
 	started := m.started
@@ -136,10 +144,9 @@ func (m *Manager) Create(ctx context.Context, router adapter.Router, logger log.
 		existsIndex := common.Index(m.endpoints, func(it adapter.Endpoint) bool {
 			return it == existsEndpoint
 		})
-		if existsIndex == -1 {
-			panic("invalid endpoint index")
+		if existsIndex != -1 {
+			m.endpoints = append(m.endpoints[:existsIndex], m.endpoints[existsIndex+1:]...)
 		}
-		m.endpoints = append(m.endpoints[:existsIndex], m.endpoints[existsIndex+1:]...)
 	}
 	m.endpoints = append(m.endpoints, endpoint)
 	m.endpointByTag[tag] = endpoint

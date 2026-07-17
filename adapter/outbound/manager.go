@@ -167,6 +167,15 @@ func (m *Manager) Close() error {
 	m.started = false
 	outbounds := m.outbounds
 	m.outbounds = nil
+	// Keep the map in sync with the slice: leaving stale entries behind is
+	// what made Remove racing Close find a tag with no slice entry. The
+	// dependency bookkeeping goes with them. defaultOutbound is deliberately
+	// left alone: route dispatch dereferences Default() without a nil check
+	// (route/route.go), so in-flight connections racing shutdown must keep
+	// getting the stale-but-closed outbound (which fails at dial) rather
+	// than a nil (which would panic).
+	clear(m.outboundByTag)
+	clear(m.dependByTag)
 	m.access.Unlock()
 	var err error
 	for _, outbound := range outbounds {
@@ -210,14 +219,20 @@ func (m *Manager) Remove(tag string) error {
 	if !found {
 		return os.ErrInvalid
 	}
-	delete(m.outboundByTag, tag)
 	index := common.Index(m.outbounds, func(it adapter.Outbound) bool {
 		return it == outbound
 	})
+	delete(m.outboundByTag, tag)
 	if index == -1 {
-		panic("invalid inbound index")
+		// Defense in depth: the tag is in the map but not the slice. No code
+		// path should produce this state (Close clears both together), but if
+		// it ever reappears, heal it instead of panicking — skip the slice
+		// splice and fall through so the rest of the bookkeeping (default
+		// outbound, dependency entries, close) still runs.
+		m.logger.Debug("outbound/", outbound.Type(), "[", tag, "] already removed from active list")
+	} else {
+		m.outbounds = append(m.outbounds[:index], m.outbounds[index+1:]...)
 	}
-	m.outbounds = append(m.outbounds[:index], m.outbounds[index+1:]...)
 	started := m.started
 	if m.defaultOutbound == outbound {
 		if len(m.outbounds) > 0 {
@@ -231,8 +246,17 @@ func (m *Manager) Remove(tag string) error {
 	if len(dependBy) > 0 {
 		return E.New("outbound[", tag, "] is depended by ", strings.Join(dependBy, ", "))
 	}
-	dependencies := outbound.Dependencies()
-	for _, dependency := range dependencies {
+	m.removeDependByEntriesLocked(outbound, tag)
+	if started {
+		return common.Close(outbound)
+	}
+	return nil
+}
+
+// removeDependByEntriesLocked drops tag from the dependBy lists of outbound's
+// dependencies. Callers must hold m.access.
+func (m *Manager) removeDependByEntriesLocked(outbound adapter.Outbound, tag string) {
+	for _, dependency := range outbound.Dependencies() {
 		if len(m.dependByTag[dependency]) == 1 {
 			delete(m.dependByTag, dependency)
 		} else {
@@ -241,10 +265,6 @@ func (m *Manager) Remove(tag string) error {
 			})
 		}
 	}
-	if started {
-		return common.Close(outbound)
-	}
-	return nil
 }
 
 func (m *Manager) Create(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, inboundType string, options any) error {
@@ -275,10 +295,12 @@ func (m *Manager) Create(ctx context.Context, router adapter.Router, logger log.
 		existsIndex := common.Index(m.outbounds, func(it adapter.Outbound) bool {
 			return it == existsOutbound
 		})
-		if existsIndex == -1 {
-			panic("invalid inbound index")
+		if existsIndex != -1 {
+			m.outbounds = append(m.outbounds[:existsIndex], m.outbounds[existsIndex+1:]...)
 		}
-		m.outbounds = append(m.outbounds[:existsIndex], m.outbounds[existsIndex+1:]...)
+		// The replacement may declare different dependencies; drop the old
+		// outbound's dependBy entries so stale ones can't block Remove later.
+		m.removeDependByEntriesLocked(existsOutbound, tag)
 	}
 	m.outbounds = append(m.outbounds, outbound)
 	m.outboundByTag[tag] = outbound
