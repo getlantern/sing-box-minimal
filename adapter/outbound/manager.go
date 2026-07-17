@@ -167,6 +167,9 @@ func (m *Manager) Close() error {
 	m.started = false
 	outbounds := m.outbounds
 	m.outbounds = nil
+	// Keep the map in sync with the slice: leaving stale entries behind is
+	// what made Remove racing Close find a tag with no slice entry.
+	clear(m.outboundByTag)
 	m.access.Unlock()
 	var err error
 	for _, outbound := range outbounds {

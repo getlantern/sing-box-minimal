@@ -63,6 +63,9 @@ func (m *Manager) Close() error {
 	m.started = false
 	endpoints := m.endpoints
 	m.endpoints = nil
+	// Keep the map in sync with the slice: leaving stale entries behind is
+	// what made Remove racing Close find a tag with no slice entry.
+	clear(m.endpointByTag)
 	monitor := taskmonitor.New(m.logger, C.StopTimeout)
 	var err error
 	for _, endpoint := range endpoints {

@@ -24,9 +24,9 @@ func (s *stubOutbound) ListenPacket(ctx context.Context, destination M.Socksaddr
 	return nil, nil
 }
 
-// Close() nils the outbounds slice but leaves outboundByTag populated, so a
-// Remove racing shutdown used to hit panic("invalid inbound index"). It must
-// instead drop the stale map entry and return nil.
+// Close() used to nil the outbounds slice while leaving outboundByTag
+// populated, so a Remove racing shutdown hit panic("invalid inbound index").
+// Close must now clear both, and Remove must report the tag as gone.
 func TestRemoveAfterClose(t *testing.T) {
 	m := NewManager(logger.NOP(), nil, nil, "")
 	out := &stubOutbound{tag: "test-out"}
@@ -37,14 +37,27 @@ func TestRemoveAfterClose(t *testing.T) {
 	if err := m.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
+	if len(m.outboundByTag) != 0 {
+		t.Fatal("Close must clear outboundByTag along with the slice")
+	}
+	if err := m.Remove("test-out"); err == nil {
+		t.Fatal("Remove after Close should report the tag as gone")
+	}
+}
+
+// Defense in depth: even if the map and slice somehow desync again (tag in
+// outboundByTag with no slice entry), Remove must heal the stale map entry
+// instead of panicking.
+func TestRemoveHealsDesync(t *testing.T) {
+	m := NewManager(logger.NOP(), nil, nil, "")
+	out := &stubOutbound{tag: "test-out"}
+	m.outboundByTag[out.Tag()] = out
+
 	if err := m.Remove("test-out"); err != nil {
-		t.Fatalf("Remove after Close: %v", err)
+		t.Fatalf("Remove on desynced manager: %v", err)
 	}
 	if _, found := m.outboundByTag["test-out"]; found {
 		t.Fatal("stale outboundByTag entry not cleaned up")
-	}
-	if err := m.Remove("test-out"); err == nil {
-		t.Fatal("second Remove should report the tag as gone")
 	}
 }
 
