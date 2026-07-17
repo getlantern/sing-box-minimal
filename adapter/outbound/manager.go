@@ -210,12 +210,17 @@ func (m *Manager) Remove(tag string) error {
 	if !found {
 		return os.ErrInvalid
 	}
-	delete(m.outboundByTag, tag)
 	index := common.Index(m.outbounds, func(it adapter.Outbound) bool {
 		return it == outbound
 	})
+	delete(m.outboundByTag, tag)
 	if index == -1 {
-		panic("invalid inbound index")
+		// Close() nils the outbounds slice but leaves outboundByTag populated,
+		// so a removal racing shutdown finds the tag with no slice entry. The
+		// outbound is already closed (or being closed) by Close(); dropping
+		// the map entry is all that's left to do.
+		m.logger.Debug("outbound/", outbound.Type(), "[", tag, "] already removed from active list")
+		return nil
 	}
 	m.outbounds = append(m.outbounds[:index], m.outbounds[index+1:]...)
 	started := m.started
@@ -275,10 +280,9 @@ func (m *Manager) Create(ctx context.Context, router adapter.Router, logger log.
 		existsIndex := common.Index(m.outbounds, func(it adapter.Outbound) bool {
 			return it == existsOutbound
 		})
-		if existsIndex == -1 {
-			panic("invalid inbound index")
+		if existsIndex != -1 {
+			m.outbounds = append(m.outbounds[:existsIndex], m.outbounds[existsIndex+1:]...)
 		}
-		m.outbounds = append(m.outbounds[:existsIndex], m.outbounds[existsIndex+1:]...)
 	}
 	m.outbounds = append(m.outbounds, outbound)
 	m.outboundByTag[tag] = outbound

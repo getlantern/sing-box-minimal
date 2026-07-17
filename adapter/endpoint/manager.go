@@ -95,12 +95,18 @@ func (m *Manager) Remove(tag string) error {
 		m.access.Unlock()
 		return os.ErrInvalid
 	}
-	delete(m.endpointByTag, tag)
 	index := common.Index(m.endpoints, func(it adapter.Endpoint) bool {
 		return it == endpoint
 	})
+	delete(m.endpointByTag, tag)
 	if index == -1 {
-		panic("invalid endpoint index")
+		// Close() nils the endpoints slice but leaves endpointByTag populated,
+		// so a removal racing shutdown finds the tag with no slice entry. The
+		// endpoint is already closed (or being closed) by Close(); dropping
+		// the map entry is all that's left to do.
+		m.logger.Debug("endpoint/", endpoint.Type(), "[", tag, "] already removed from active list")
+		m.access.Unlock()
+		return nil
 	}
 	m.endpoints = append(m.endpoints[:index], m.endpoints[index+1:]...)
 	started := m.started
@@ -136,10 +142,9 @@ func (m *Manager) Create(ctx context.Context, router adapter.Router, logger log.
 		existsIndex := common.Index(m.endpoints, func(it adapter.Endpoint) bool {
 			return it == existsEndpoint
 		})
-		if existsIndex == -1 {
-			panic("invalid endpoint index")
+		if existsIndex != -1 {
+			m.endpoints = append(m.endpoints[:existsIndex], m.endpoints[existsIndex+1:]...)
 		}
-		m.endpoints = append(m.endpoints[:existsIndex], m.endpoints[existsIndex+1:]...)
 	}
 	m.endpoints = append(m.endpoints, endpoint)
 	m.endpointByTag[tag] = endpoint
