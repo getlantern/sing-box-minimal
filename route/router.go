@@ -4,6 +4,14 @@ import (
 	"context"
 	"os"
 	"runtime"
+	"sync"
+	"sync/atomic"
+
+	E "github.com/sagernet/sing/common/exceptions"
+	"github.com/sagernet/sing/common/task"
+	"github.com/sagernet/sing/common/x/list"
+	"github.com/sagernet/sing/service"
+	"github.com/sagernet/sing/service/pause"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/process"
@@ -13,33 +21,32 @@ import (
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	R "github.com/sagernet/sing-box/route/rule"
-	E "github.com/sagernet/sing/common/exceptions"
-	"github.com/sagernet/sing/common/task"
-	"github.com/sagernet/sing/service"
-	"github.com/sagernet/sing/service/pause"
 )
 
 var _ adapter.Router = (*Router)(nil)
 
 type Router struct {
-	ctx               context.Context
-	logger            log.ContextLogger
-	inbound           adapter.InboundManager
-	outbound          adapter.OutboundManager
-	dns               adapter.DNSRouter
-	dnsTransport      adapter.DNSTransportManager
-	connection        adapter.ConnectionManager
-	network           adapter.NetworkManager
-	rules             []adapter.Rule
-	needFindProcess   bool
-	ruleSets          []adapter.RuleSet
-	ruleSetMap        map[string]adapter.RuleSet
-	processSearcher   process.Searcher
-	pauseManager      pause.Manager
-	trackers          []adapter.ConnectionTracker
-	platformInterface platform.Interface
-	needWIFIState     bool
-	started           bool
+	ctx                 context.Context
+	logger              log.ContextLogger
+	inbound             adapter.InboundManager
+	outbound            adapter.OutboundManager
+	dns                 adapter.DNSRouter
+	dnsTransport        adapter.DNSTransportManager
+	connection          adapter.ConnectionManager
+	network             adapter.NetworkManager
+	rules               []adapter.Rule
+	needFindProcess     bool
+	ruleSets            []adapter.RuleSet
+	ruleSetMap          map[string]adapter.RuleSet
+	processNeeded       atomic.Bool
+	processSearcher     process.Searcher
+	processSearcherOnce sync.Once
+	processCallbacks    []*list.Element[adapter.RuleSetUpdateCallback]
+	pauseManager        pause.Manager
+	trackers            []adapter.ConnectionTracker
+	platformInterface   platform.Interface
+	needWIFIState       bool
+	started             bool
 }
 
 func NewRouter(ctx context.Context, logFactory log.Factory, options option.RouteOptions, dnsOptions option.DNSOptions) *Router {
@@ -113,34 +120,20 @@ func (r *Router) Start(stage adapter.StartStage) error {
 		if cacheContext != nil {
 			cacheContext.Close()
 		}
-		needFindProcess := r.needFindProcess
 		for _, ruleSet := range r.ruleSets {
-			metadata := ruleSet.Metadata()
-			if metadata.ContainsProcessRule {
-				needFindProcess = true
-			}
-			if metadata.ContainsWIFIRule {
+			if ruleSet.Metadata().ContainsWIFIRule {
 				r.needWIFIState = true
 			}
+			element := ruleSet.RegisterCallback(func(adapter.RuleSet) {
+				r.updateProcessNeeded()
+			})
+			r.processCallbacks = append(r.processCallbacks, element)
 		}
-		if needFindProcess {
-			if r.platformInterface != nil {
-				r.processSearcher = r.platformInterface
-			} else {
-				monitor.Start("initialize process searcher")
-				searcher, err := process.NewSearcher(process.Config{
-					Logger:         r.logger,
-					PackageManager: r.network.PackageManager(),
-				})
-				monitor.Finish()
-				if err != nil {
-					if err != os.ErrInvalid {
-						r.logger.Warn(E.Cause(err, "create process searcher"))
-					}
-				} else {
-					r.processSearcher = searcher
-				}
-			}
+		r.updateProcessNeeded()
+		if r.processNeeded.Load() {
+			monitor.Start("initialize process searcher")
+			r.processInfoSearcher()
+			monitor.Finish()
 		}
 	case adapter.StartStatePostStart:
 		for i, rule := range r.rules {
@@ -170,6 +163,43 @@ func (r *Router) Start(stage adapter.StartStage) error {
 	return nil
 }
 
+func (r *Router) updateProcessNeeded() {
+	need := r.needFindProcess
+	if !need {
+		for _, ruleSet := range r.ruleSets {
+			if ruleSet.Metadata().ContainsProcessRule {
+				need = true
+				break
+			}
+		}
+	}
+	r.processNeeded.Store(need)
+}
+
+func (r *Router) processInfoSearcher() process.Searcher {
+	if !r.processNeeded.Load() {
+		return nil
+	}
+	r.processSearcherOnce.Do(func() {
+		if r.platformInterface != nil {
+			r.processSearcher = r.platformInterface
+			return
+		}
+		searcher, err := process.NewSearcher(process.Config{
+			Logger:         r.logger,
+			PackageManager: r.network.PackageManager(),
+		})
+		if err != nil {
+			if err != os.ErrInvalid {
+				r.logger.Warn(E.Cause(err, "create process searcher"))
+			}
+			return
+		}
+		r.processSearcher = searcher
+	})
+	return r.processSearcher
+}
+
 func (r *Router) Close() error {
 	monitor := taskmonitor.New(r.logger, C.StopTimeout)
 	var err error
@@ -181,6 +211,9 @@ func (r *Router) Close() error {
 		monitor.Finish()
 	}
 	for i, ruleSet := range r.ruleSets {
+		if i < len(r.processCallbacks) {
+			ruleSet.UnregisterCallback(r.processCallbacks[i])
+		}
 		monitor.Start("close rule-set[", i, "]")
 		err = E.Append(err, ruleSet.Close(), func(err error) error {
 			return E.Cause(err, "close rule-set[", i, "]")
