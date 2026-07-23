@@ -38,10 +38,11 @@ type Router struct {
 	needFindProcess     bool
 	ruleSets            []adapter.RuleSet
 	ruleSetMap          map[string]adapter.RuleSet
+	processNeededMutex  sync.Mutex
 	processNeeded       atomic.Bool
 	processSearcher     process.Searcher
 	processSearcherOnce sync.Once
-	processCallbacks    []*list.Element[adapter.RuleSetUpdateCallback]
+	processCallbacks    map[adapter.RuleSet]*list.Element[adapter.RuleSetUpdateCallback]
 	pauseManager        pause.Manager
 	trackers            []adapter.ConnectionTracker
 	platformInterface   platform.Interface
@@ -61,6 +62,7 @@ func NewRouter(ctx context.Context, logFactory log.Factory, options option.Route
 		network:           service.FromContext[adapter.NetworkManager](ctx),
 		rules:             make([]adapter.Rule, 0, len(options.Rules)),
 		ruleSetMap:        make(map[string]adapter.RuleSet),
+		processCallbacks:  make(map[adapter.RuleSet]*list.Element[adapter.RuleSetUpdateCallback]),
 		needFindProcess:   hasRule(options.Rules, isProcessRule) || hasDNSRule(dnsOptions.Rules, isProcessDNSRule) || options.FindProcess,
 		pauseManager:      service.FromContext[pause.Manager](ctx),
 		platformInterface: service.FromContext[platform.Interface](ctx),
@@ -127,7 +129,7 @@ func (r *Router) Start(stage adapter.StartStage) error {
 			element := ruleSet.RegisterCallback(func(adapter.RuleSet) {
 				r.updateProcessNeeded()
 			})
-			r.processCallbacks = append(r.processCallbacks, element)
+			r.processCallbacks[ruleSet] = element
 		}
 		r.updateProcessNeeded()
 		if r.processNeeded.Load() {
@@ -164,6 +166,9 @@ func (r *Router) Start(stage adapter.StartStage) error {
 }
 
 func (r *Router) updateProcessNeeded() {
+	r.processNeededMutex.Lock()
+	defer r.processNeededMutex.Unlock()
+
 	need := r.needFindProcess
 	if !need {
 		for _, ruleSet := range r.ruleSets {
@@ -211,8 +216,8 @@ func (r *Router) Close() error {
 		monitor.Finish()
 	}
 	for i, ruleSet := range r.ruleSets {
-		if i < len(r.processCallbacks) {
-			ruleSet.UnregisterCallback(r.processCallbacks[i])
+		if element, ok := r.processCallbacks[ruleSet]; ok {
+			ruleSet.UnregisterCallback(element)
 		}
 		monitor.Start("close rule-set[", i, "]")
 		err = E.Append(err, ruleSet.Close(), func(err error) error {
