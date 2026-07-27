@@ -33,11 +33,11 @@ func (r *ProcessItem) Match(metadata *adapter.InboundContext) bool {
 	if metadata.ProcessInfo == nil || metadata.ProcessInfo.ProcessPath == "" {
 		return false
 	}
-	path := filepath.Base(metadata.ProcessInfo.ProcessPath)
+	name := filepath.Base(metadata.ProcessInfo.ProcessPath)
 	if C.IsWindows {
-		path = strings.ToLower(path)
+		name = strings.ToLower(name)
 	}
-	return r.processMap[path]
+	return r.processMap[name]
 }
 
 func (r *ProcessItem) String() string {
