@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sagernet/sing-mux"
-	"github.com/sagernet/sing-vmess"
+	mux "github.com/sagernet/sing-mux"
+	vmess "github.com/sagernet/sing-vmess"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/buf"
 	"github.com/sagernet/sing/common/bufio"
@@ -282,14 +282,18 @@ func (r *Router) matchRule(
 	selectedRule adapter.Rule, selectedRuleIndex int,
 	buffers []*buf.Buffer, packetBuffers []*N.PacketBuffer, fatalErr error,
 ) {
-	if r.processSearcher != nil && metadata.ProcessInfo == nil {
+	var searcher process.Searcher
+	if metadata.ProcessInfo == nil {
+		searcher = r.processInfoSearcher()
+	}
+	if searcher != nil {
 		var originDestination netip.AddrPort
 		if metadata.OriginDestination.IsValid() {
 			originDestination = metadata.OriginDestination.AddrPort()
 		} else if metadata.Destination.IsIP() {
 			originDestination = metadata.Destination.AddrPort()
 		}
-		processInfo, fErr := process.FindProcessInfo(r.processSearcher, ctx, metadata.Network, metadata.Source.AddrPort(), originDestination)
+		processInfo, fErr := process.FindProcessInfo(searcher, ctx, metadata.Network, metadata.Source.AddrPort(), originDestination)
 		if fErr != nil {
 			r.logger.InfoContext(ctx, "failed to search process: ", fErr)
 		} else {
