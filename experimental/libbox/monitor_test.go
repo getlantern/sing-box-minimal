@@ -7,7 +7,6 @@ import (
 	"sync"
 	"syscall"
 	"testing"
-	"time"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-tun"
@@ -34,8 +33,10 @@ type mockNetworkManager struct {
 	updateCallCount int
 }
 
-func (m *mockNetworkManager) Start(stage adapter.StartStage) error { return nil }
-func (m *mockNetworkManager) Close() error                        { return nil }
+func (m *mockNetworkManager) Start(stage adapter.StartStage) error  { return nil }
+func (m *mockNetworkManager) Close() error                          { return nil }
+func (m *mockNetworkManager) Initialize(ruleSets []adapter.RuleSet) {}
+func (m *mockNetworkManager) NeedWIFIState() bool                   { return false }
 func (m *mockNetworkManager) InterfaceFinder() control.InterfaceFinder {
 	return m.finder
 }
@@ -56,12 +57,12 @@ func (m *mockNetworkManager) AutoRedirectOutputMark() uint32                   {
 func (m *mockNetworkManager) AutoRedirectOutputMarkFunc() control.Func {
 	return func(network, address string, conn syscall.RawConn) error { return nil }
 }
-func (m *mockNetworkManager) NetworkMonitor() tun.NetworkUpdateMonitor        { return nil }
-func (m *mockNetworkManager) InterfaceMonitor() tun.DefaultInterfaceMonitor   { return nil }
-func (m *mockNetworkManager) PackageManager() tun.PackageManager              { return nil }
-func (m *mockNetworkManager) WIFIState() adapter.WIFIState                    { return adapter.WIFIState{} }
-func (m *mockNetworkManager) ResetNetwork()                                   {}
-func (m *mockNetworkManager) UpdateWIFIState()                                {}
+func (m *mockNetworkManager) NetworkMonitor() tun.NetworkUpdateMonitor      { return nil }
+func (m *mockNetworkManager) InterfaceMonitor() tun.DefaultInterfaceMonitor { return nil }
+func (m *mockNetworkManager) PackageManager() tun.PackageManager            { return nil }
+func (m *mockNetworkManager) WIFIState() adapter.WIFIState                  { return adapter.WIFIState{} }
+func (m *mockNetworkManager) ResetNetwork()                                 {}
+func (m *mockNetworkManager) UpdateWIFIState()                              {}
 
 // mockLogger implements logger.Logger and records which levels were called.
 type mockLogger struct {
@@ -76,8 +77,8 @@ func (l *mockLogger) Debug(args ...any) {
 	defer l.mu.Unlock()
 	l.debugLog = append(l.debugLog, args)
 }
-func (l *mockLogger) Info(args ...any)  {}
-func (l *mockLogger) Warn(args ...any)  {}
+func (l *mockLogger) Info(args ...any) {}
+func (l *mockLogger) Warn(args ...any) {}
 func (l *mockLogger) Error(args ...any) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -114,8 +115,8 @@ func newTestMonitor(finder control.InterfaceFinder) (*platformDefaultInterfaceMo
 
 // callbackRecorder registers a callback on the monitor and records invocations.
 type callbackRecorder struct {
-	mu         sync.Mutex
-	calls      []callbackCall
+	mu    sync.Mutex
+	calls []callbackCall
 }
 
 type callbackCall struct {

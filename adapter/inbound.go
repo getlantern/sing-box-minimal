@@ -5,12 +5,10 @@ import (
 	"net/netip"
 	"time"
 
-	M "github.com/sagernet/sing/common/metadata"
-
-	"github.com/sagernet/sing-box/common/process"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
+	M "github.com/sagernet/sing/common/metadata"
 )
 
 type Inbound interface {
@@ -65,13 +63,10 @@ type InboundContext struct {
 	// cache
 
 	// Deprecated: implement in rule action
-	InboundDetour            string
-	LastInbound              string
-	OriginDestination        M.Socksaddr
-	RouteOriginalDestination M.Socksaddr
-	// Deprecated: to be removed
-	//nolint:staticcheck
-	InboundOptions            option.InboundOptions
+	InboundDetour             string
+	LastInbound               string
+	OriginDestination         M.Socksaddr
+	RouteOriginalDestination  M.Socksaddr
 	UDPDisableDomainUnmapping bool
 	UDPConnect                bool
 	UDPTimeout                time.Duration
@@ -87,7 +82,7 @@ type InboundContext struct {
 	DestinationAddresses []netip.Addr
 	SourceGeoIPCode      string
 	GeoIPCode            string
-	ProcessInfo          *process.Info
+	ProcessInfo          *ConnectionOwner
 	QueryType            uint16
 	FakeIP               bool
 
@@ -107,6 +102,10 @@ type InboundContext struct {
 func (c *InboundContext) ResetRuleCache() {
 	c.IPCIDRMatchSource = false
 	c.IPCIDRAcceptEmpty = false
+	c.ResetRuleMatchCache()
+}
+
+func (c *InboundContext) ResetRuleMatchCache() {
 	c.SourceAddressMatch = false
 	c.SourcePortMatch = false
 	c.DestinationAddressMatch = false
