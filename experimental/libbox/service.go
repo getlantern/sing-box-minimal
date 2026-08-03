@@ -36,6 +36,13 @@ type platformInterfaceWrapper struct {
 	isConstrained          bool
 }
 
+func NewPlatformInterfaceWrapper(iif PlatformInterface) adapter.PlatformInterface {
+	return &platformInterfaceWrapper{
+		iif:       iif,
+		useProcFS: iif.UseProcFS(),
+	}
+}
+
 func (w *platformInterfaceWrapper) Initialize(networkManager adapter.NetworkManager) error {
 	w.networkManager = networkManager
 	return nil
