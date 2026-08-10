@@ -275,10 +275,21 @@ func (m *Manager) Create(ctx context.Context, router adapter.Router, logger log.
 	if err != nil {
 		return err
 	}
+	// The replacement starts before the predecessor closes (make before break), so
+	// a replacement that fails to start leaves the existing outbound serving this
+	// tag rather than dropping it. The cost is a transient window where both are
+	// live, which is why teardown has to be prompt.
 	if m.started {
 		for _, stage := range adapter.ListStartStages {
 			err = adapter.LegacyStart(outbound, stage)
 			if err != nil {
+				// This outbound never reaches m.outbounds/outboundByTag on the error
+				// path, so nothing else can ever close it. Release whatever the
+				// earlier stages brought up before returning, or it leaks for the
+				// lifetime of the process.
+				if closeErr := common.Close(outbound); closeErr != nil {
+					m.logger.Warn("close partially started outbound/", outbound.Type(), "[", outbound.Tag(), "]: ", closeErr)
+				}
 				return E.Cause(err, stage, " outbound/", outbound.Type(), "[", outbound.Tag(), "]")
 			}
 		}
@@ -287,9 +298,12 @@ func (m *Manager) Create(ctx context.Context, router adapter.Router, logger log.
 	defer m.access.Unlock()
 	if existsOutbound, loaded := m.outboundByTag[tag]; loaded {
 		if m.started {
-			err = common.Close(existsOutbound)
-			if err != nil {
-				return E.Cause(err, "close outbound/", existsOutbound.Type(), "[", existsOutbound.Tag(), "]")
+			// Log rather than abort. The predecessor is being discarded either way,
+			// and returning here would leave it registered-but-closed while the
+			// replacement — already fully started — never gets registered, and so
+			// could never be closed either.
+			if closeErr := common.Close(existsOutbound); closeErr != nil {
+				m.logger.Warn("close outbound/", existsOutbound.Type(), "[", existsOutbound.Tag(), "]: ", closeErr)
 			}
 		}
 		existsIndex := common.Index(m.outbounds, func(it adapter.Outbound) bool {

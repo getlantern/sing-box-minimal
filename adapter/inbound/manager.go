@@ -124,15 +124,22 @@ func (m *Manager) Create(ctx context.Context, router adapter.Router, logger log.
 		for _, stage := range adapter.ListStartStages {
 			err = adapter.LegacyStart(inbound, stage)
 			if err != nil {
+				// Never reaches the registry maps on this path, so nothing else can
+				// close it. Release what the earlier stages brought up.
+				if closeErr := common.Close(inbound); closeErr != nil {
+					m.logger.Warn("close partially started inbound/", inbound.Type(), "[", inbound.Tag(), "]: ", closeErr)
+				}
 				return E.Cause(err, stage, " inbound/", inbound.Type(), "[", inbound.Tag(), "]")
 			}
 		}
 	}
 	if existsInbound, loaded := m.inboundByTag[tag]; loaded {
 		if m.started {
-			err = existsInbound.Close()
-			if err != nil {
-				return E.Cause(err, "close inbound/", existsInbound.Type(), "[", existsInbound.Tag(), "]")
+			// Log rather than abort: the predecessor is discarded either way, and
+			// returning here would leave it registered-but-closed while the
+			// replacement, already started, is never registered.
+			if closeErr := existsInbound.Close(); closeErr != nil {
+				m.logger.Warn("close inbound/", existsInbound.Type(), "[", existsInbound.Tag(), "]: ", closeErr)
 			}
 		}
 		existsIndex := common.Index(m.inbounds, func(it adapter.Inbound) bool {

@@ -130,15 +130,22 @@ func (m *Manager) Create(ctx context.Context, router adapter.Router, logger log.
 		for _, stage := range adapter.ListStartStages {
 			err = adapter.LegacyStart(endpoint, stage)
 			if err != nil {
+				// Never reaches the registry maps on this path, so nothing else can
+				// close it. Release what the earlier stages brought up.
+				if closeErr := common.Close(endpoint); closeErr != nil {
+					m.logger.Warn("close partially started endpoint/", endpoint.Type(), "[", endpoint.Tag(), "]: ", closeErr)
+				}
 				return E.Cause(err, stage, " endpoint/", endpoint.Type(), "[", endpoint.Tag(), "]")
 			}
 		}
 	}
 	if existsEndpoint, loaded := m.endpointByTag[tag]; loaded {
 		if m.started {
-			err = existsEndpoint.Close()
-			if err != nil {
-				return E.Cause(err, "close endpoint/", existsEndpoint.Type(), "[", existsEndpoint.Tag(), "]")
+			// Log rather than abort: the predecessor is discarded either way, and
+			// returning here would leave it registered-but-closed while the
+			// replacement, already started, is never registered.
+			if closeErr := existsEndpoint.Close(); closeErr != nil {
+				m.logger.Warn("close endpoint/", existsEndpoint.Type(), "[", existsEndpoint.Tag(), "]: ", closeErr)
 			}
 		}
 		existsIndex := common.Index(m.endpoints, func(it adapter.Endpoint) bool {

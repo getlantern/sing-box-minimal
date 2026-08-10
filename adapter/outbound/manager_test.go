@@ -2,6 +2,7 @@ package outbound
 
 import (
 	"context"
+	"errors"
 	"net"
 	"testing"
 
@@ -111,5 +112,106 @@ func TestRemove(t *testing.T) {
 	}
 	if _, found := m.outboundByTag["test-out"]; found {
 		t.Fatal("outbound not removed from map")
+	}
+}
+
+// lifecycleOutbound is a stubOutbound that participates in the start-stage
+// lifecycle, so a test can fail a chosen stage and observe whether Create
+// cleaned up after itself.
+type lifecycleOutbound struct {
+	stubOutbound
+	failStage  *adapter.StartStage // stage to fail at, nil to always succeed
+	closeErr   error
+	started    []adapter.StartStage
+	closeCalls int
+}
+
+func (l *lifecycleOutbound) Start(stage adapter.StartStage) error {
+	if l.failStage != nil && stage == *l.failStage {
+		return errors.New("stage failed")
+	}
+	l.started = append(l.started, stage)
+	return nil
+}
+
+func (l *lifecycleOutbound) Close() error {
+	l.closeCalls++
+	return l.closeErr
+}
+
+// A replacement that fails partway through its start stages never reaches
+// m.outbounds or outboundByTag, so nothing else can ever close it. Create must
+// release the stages that did come up, or every failed start leaks whatever the
+// outbound allocated (for unbounded, a whole broflake/WebRTC stack).
+func TestCreateClosesOutboundOnStartFailure(t *testing.T) {
+	t.Parallel()
+
+	failAt := adapter.StartStateStarted // last stage, so the earlier three ran
+	out := &lifecycleOutbound{stubOutbound: stubOutbound{tag: "flaky"}, failStage: &failAt}
+
+	m := NewManager(logger.NOP(), &stubRegistry{out: out}, nil, "")
+	m.started = true
+
+	err := m.Create(context.Background(), nil, nil, "flaky", "stub", nil)
+	if err == nil {
+		t.Fatal("Create should surface the start-stage failure")
+	}
+	if out.closeCalls != 1 {
+		t.Fatalf("partially started outbound was not closed (closeCalls=%d); its resources leak "+
+			"because it is never registered and so can never be closed later", out.closeCalls)
+	}
+	if _, found := m.outboundByTag["flaky"]; found {
+		t.Fatal("an outbound that failed to start must not be registered")
+	}
+	if len(m.outbounds) != 0 {
+		t.Fatalf("an outbound that failed to start must not be in the active list (len=%d)", len(m.outbounds))
+	}
+}
+
+// Create used to abort when closing the predecessor returned an error, which
+// left the manager inconsistent: the predecessor stayed registered despite
+// having been closed, while the replacement — already fully started — was never
+// registered and so could never be closed. The swap has to complete.
+func TestCreateCompletesSwapWhenPredecessorCloseFails(t *testing.T) {
+	t.Parallel()
+
+	old := &lifecycleOutbound{stubOutbound: stubOutbound{tag: "dup"}, closeErr: errors.New("close failed")}
+	replacement := &lifecycleOutbound{stubOutbound: stubOutbound{tag: "dup"}}
+
+	m := NewManager(logger.NOP(), &stubRegistry{out: replacement}, nil, "")
+	m.started = true
+	m.outbounds = append(m.outbounds, old)
+	m.outboundByTag["dup"] = old
+
+	if err := m.Create(context.Background(), nil, nil, "dup", "stub", nil); err != nil {
+		t.Fatalf("Create must not fail because the predecessor's Close did: %v", err)
+	}
+	if old.closeCalls != 1 {
+		t.Fatalf("predecessor not closed (closeCalls=%d)", old.closeCalls)
+	}
+	if got := m.outboundByTag["dup"]; got != adapter.Outbound(replacement) {
+		t.Fatalf("tag still maps to the closed predecessor: %#v", got)
+	}
+	if len(m.outbounds) != 1 || m.outbounds[0] != adapter.Outbound(replacement) {
+		t.Fatalf("active list not swapped: len=%d", len(m.outbounds))
+	}
+}
+
+// The happy path must still run every stage and leave the outbound open.
+func TestCreateRunsAllStartStages(t *testing.T) {
+	t.Parallel()
+
+	out := &lifecycleOutbound{stubOutbound: stubOutbound{tag: "ok"}}
+	m := NewManager(logger.NOP(), &stubRegistry{out: out}, nil, "")
+	m.started = true
+
+	if err := m.Create(context.Background(), nil, nil, "ok", "stub", nil); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if len(out.started) != len(adapter.ListStartStages) {
+		t.Fatalf("ran %d of %d start stages", len(out.started), len(adapter.ListStartStages))
+	}
+	if out.closeCalls != 0 {
+		t.Fatalf("a successfully started outbound must not be closed (closeCalls=%d)", out.closeCalls)
 	}
 }

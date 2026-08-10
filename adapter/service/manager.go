@@ -119,15 +119,22 @@ func (m *Manager) Create(ctx context.Context, logger log.ContextLogger, tag stri
 		for _, stage := range adapter.ListStartStages {
 			err = adapter.LegacyStart(service, stage)
 			if err != nil {
+				// Never reaches the registry maps on this path, so nothing else can
+				// close it. Release what the earlier stages brought up.
+				if closeErr := common.Close(service); closeErr != nil {
+					m.logger.Warn("close partially started service/", service.Type(), "[", service.Tag(), "]: ", closeErr)
+				}
 				return E.Cause(err, stage, " service/", service.Type(), "[", service.Tag(), "]")
 			}
 		}
 	}
 	if existsService, loaded := m.serviceByTag[tag]; loaded {
 		if m.started {
-			err = existsService.Close()
-			if err != nil {
-				return E.Cause(err, "close service/", existsService.Type(), "[", existsService.Tag(), "]")
+			// Log rather than abort: the predecessor is discarded either way, and
+			// returning here would leave it registered-but-closed while the
+			// replacement, already started, is never registered.
+			if closeErr := existsService.Close(); closeErr != nil {
+				m.logger.Warn("close service/", existsService.Type(), "[", existsService.Tag(), "]: ", closeErr)
 			}
 		}
 		existsIndex := common.Index(m.services, func(it adapter.Service) bool {
