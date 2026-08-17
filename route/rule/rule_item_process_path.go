@@ -29,14 +29,24 @@ func NewProcessPathItem(processNameList []string) *ProcessPathItem {
 }
 
 func (r *ProcessPathItem) Match(metadata *adapter.InboundContext) bool {
-	if metadata.ProcessInfo == nil || metadata.ProcessInfo.ProcessPath == "" {
+	if metadata.ProcessInfo == nil {
 		return false
 	}
 	path := metadata.ProcessInfo.ProcessPath
 	if C.IsWindows {
 		path = strings.ToLower(path)
 	}
-	return r.processMap[path]
+	if path != "" && r.processMap[path] {
+		return true
+	}
+	if C.IsAndroid {
+		for _, packageName := range metadata.ProcessInfo.AndroidPackageNames {
+			if r.processMap[packageName] {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (r *ProcessPathItem) String() string {

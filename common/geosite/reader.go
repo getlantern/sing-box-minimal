@@ -4,12 +4,12 @@ import (
 	"bufio"
 	"encoding/binary"
 	"io"
+	"math"
 	"os"
 	"sync"
 	"sync/atomic"
 
 	E "github.com/sagernet/sing/common/exceptions"
-	"github.com/sagernet/sing/common/varbin"
 )
 
 type Reader struct {
@@ -49,12 +49,6 @@ func NewReader(readSeeker io.ReadSeeker) (*Reader, []string, error) {
 	return reader, codes, nil
 }
 
-type geositeMetadata struct {
-	Code   string
-	Index  uint64
-	Length uint64
-}
-
 func (r *Reader) readMetadata() error {
 	counter := &readCounter{Reader: r.reader}
 	reader := bufio.NewReader(counter)
@@ -69,20 +63,18 @@ func (r *Reader) readMetadata() error {
 	if err != nil {
 		return err
 	}
-	keys := make([]string, entryLength)
 	domainIndex := make(map[string]int)
 	domainLength := make(map[string]int)
-	for i := 0; i < int(entryLength); i++ {
+	for range entryLength {
 		var (
 			code       string
 			codeIndex  uint64
 			codeLength uint64
 		)
-		code, err = varbin.ReadValue[string](reader, binary.BigEndian)
+		code, err = readString(reader)
 		if err != nil {
 			return err
 		}
-		keys[i] = code
 		codeIndex, err = binary.ReadUvarint(reader)
 		if err != nil {
 			return err
@@ -90,6 +82,9 @@ func (r *Reader) readMetadata() error {
 		codeLength, err = binary.ReadUvarint(reader)
 		if err != nil {
 			return err
+		}
+		if codeIndex > math.MaxInt32 || codeLength > math.MaxInt32 {
+			return E.New("invalid metadata entry: ", code)
 		}
 		domainIndex[code] = int(codeIndex)
 		domainLength[code] = int(codeLength)
@@ -102,6 +97,9 @@ func (r *Reader) readMetadata() error {
 }
 
 func (r *Reader) Read(code string) ([]Item, error) {
+	r.access.Lock()
+	defer r.access.Unlock()
+
 	index, exists := r.domainIndex[code]
 	if !exists {
 		return nil, E.New("code ", code, " not exists!")
@@ -111,10 +109,22 @@ func (r *Reader) Read(code string) ([]Item, error) {
 		return nil, err
 	}
 	r.bufferedReader.Reset(r.reader)
-	itemList := make([]Item, r.domainLength[code])
-	err = varbin.Read(r.bufferedReader, binary.BigEndian, &itemList)
-	if err != nil {
-		return nil, err
+	length := r.domainLength[code]
+	var itemList []Item
+	for range length {
+		var (
+			typeByte byte
+			value    string
+		)
+		typeByte, err = r.bufferedReader.ReadByte()
+		if err != nil {
+			return nil, err
+		}
+		value, err = readString(r.bufferedReader)
+		if err != nil {
+			return nil, err
+		}
+		itemList = append(itemList, Item{Type: ItemType(typeByte), Value: value})
 	}
 	return itemList, nil
 }
@@ -134,4 +144,21 @@ func (r *readCounter) Read(p []byte) (n int, err error) {
 		atomic.AddInt64(&r.count, int64(n))
 	}
 	return
+}
+
+func readString(reader io.ByteReader) (string, error) {
+	length, err := binary.ReadUvarint(reader)
+	if err != nil {
+		return "", err
+	}
+	var result []byte
+	for range length {
+		var value byte
+		value, err = reader.ReadByte()
+		if err != nil {
+			return "", err
+		}
+		result = append(result, value)
+	}
+	return string(result), nil
 }

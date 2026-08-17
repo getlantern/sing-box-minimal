@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"io"
 	"time"
 
+	E "github.com/sagernet/sing/common/exceptions"
+	"github.com/sagernet/sing/common/observable"
 	"github.com/sagernet/sing/common/varbin"
 )
 
@@ -14,6 +17,7 @@ type ClashServer interface {
 	ConnectionTracker
 	Mode() string
 	ModeList() []string
+	SetModeUpdateHook(hook *observable.Subscriber[struct{}])
 	HistoryStorage() URLTestHistoryStorage
 }
 
@@ -23,7 +27,7 @@ type URLTestHistory struct {
 }
 
 type URLTestHistoryStorage interface {
-	SetHook(hook chan<- struct{})
+	SetHook(hook *observable.Subscriber[struct{}])
 	LoadURLTestHistory(tag string) *URLTestHistory
 	DeleteURLTestHistory(tag string)
 	StoreURLTestHistory(tag string, history *URLTestHistory)
@@ -66,7 +70,11 @@ func (s *SavedBinary) MarshalBinary() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	err = varbin.Write(&buffer, binary.BigEndian, s.Content)
+	_, err = varbin.WriteUvarint(&buffer, uint64(len(s.Content)))
+	if err != nil {
+		return nil, err
+	}
+	_, err = buffer.Write(s.Content)
 	if err != nil {
 		return nil, err
 	}
@@ -74,7 +82,11 @@ func (s *SavedBinary) MarshalBinary() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	err = varbin.Write(&buffer, binary.BigEndian, s.LastEtag)
+	_, err = varbin.WriteUvarint(&buffer, uint64(len(s.LastEtag)))
+	if err != nil {
+		return nil, err
+	}
+	_, err = buffer.WriteString(s.LastEtag)
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +100,15 @@ func (s *SavedBinary) UnmarshalBinary(data []byte) error {
 	if err != nil {
 		return err
 	}
-	err = varbin.Read(reader, binary.BigEndian, &s.Content)
+	contentLength, err := binary.ReadUvarint(reader)
+	if err != nil {
+		return err
+	}
+	if contentLength > uint64(reader.Len()) {
+		return E.New("invalid content length: ", contentLength)
+	}
+	s.Content = make([]byte, contentLength)
+	_, err = io.ReadFull(reader, s.Content)
 	if err != nil {
 		return err
 	}
@@ -98,10 +118,19 @@ func (s *SavedBinary) UnmarshalBinary(data []byte) error {
 		return err
 	}
 	s.LastUpdated = time.Unix(lastUpdated, 0)
-	err = varbin.Read(reader, binary.BigEndian, &s.LastEtag)
+	etagLength, err := binary.ReadUvarint(reader)
 	if err != nil {
 		return err
 	}
+	if etagLength > uint64(reader.Len()) {
+		return E.New("invalid etag length: ", etagLength)
+	}
+	etagBytes := make([]byte, etagLength)
+	_, err = io.ReadFull(reader, etagBytes)
+	if err != nil {
+		return err
+	}
+	s.LastEtag = string(etagBytes)
 	return nil
 }
 

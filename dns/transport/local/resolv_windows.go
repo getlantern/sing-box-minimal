@@ -5,11 +5,13 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"strconv"
 	"syscall"
 	"time"
 	"unsafe"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/service"
 
 	"golang.org/x/sys/windows"
@@ -63,6 +65,9 @@ func dnsReadConfig(ctx context.Context, _ string) *dnsConfig {
 					continue
 				}
 				dnsServerAddr = netip.AddrFrom16(sockaddr.Addr)
+				if sockaddr.ZoneId != 0 {
+					dnsServerAddr = dnsServerAddr.WithZone(strconv.FormatInt(int64(sockaddr.ZoneId), 10))
+				}
 			default:
 				// Unexpected type.
 				continue
@@ -73,12 +78,12 @@ func dnsReadConfig(ctx context.Context, _ string) *dnsConfig {
 			}{ifName: windows.UTF16PtrToString(address.FriendlyName), Addr: dnsServerAddr})
 		}
 	}
-	var myInterface string
+	var myInterfaces []string
 	if networkManager := service.FromContext[adapter.NetworkManager](ctx); networkManager != nil {
-		myInterface = networkManager.InterfaceMonitor().MyInterface()
+		myInterfaces = networkManager.InterfaceMonitor().MyInterfaces()
 	}
 	for _, address := range dnsAddresses {
-		if address.ifName == myInterface {
+		if common.Contains(myInterfaces, address.ifName) {
 			continue
 		}
 		conf.servers = append(conf.servers, net.JoinHostPort(address.String(), "53"))

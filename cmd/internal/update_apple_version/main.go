@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/sagernet/sing-box/cmd/internal/build_shared"
+	"github.com/sagernet/sing-box/common/badversion"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing/common"
 
@@ -71,14 +72,23 @@ func findAndReplace(objectsMap map[string]any, projectContent string, bundleIDLi
 		indexEnd := indexStart + strings.Index(projectContent[indexStart:], "}")
 		versionStart := indexStart + strings.Index(projectContent[indexStart:indexEnd], "MARKETING_VERSION = ") + 20
 		versionEnd := versionStart + strings.Index(projectContent[versionStart:indexEnd], ";")
-		version := projectContent[versionStart:versionEnd]
+		version := strings.Trim(projectContent[versionStart:versionEnd], "\"")
 		if version == newVersion {
 			continue
 		}
 		updated = true
-		projectContent = projectContent[:versionStart] + newVersion + projectContent[versionEnd:]
+		projectContent = projectContent[:versionStart] + formatProjectVersion(newVersion) + projectContent[versionEnd:]
 	}
 	return projectContent, updated
+}
+
+// Xcode serializes a version without quotes unless it contains a pre-release
+// part; always quoting makes Xcode rewrite the value on the next save.
+func formatProjectVersion(version string) string {
+	if badversion.Parse(version).PreReleaseIdentifier == "" {
+		return version
+	}
+	return "\"" + version + "\""
 }
 
 func findAndReplaceProjectVersion(objectsMap map[string]any, projectContent string, directoryList []string, newVersion string) (string, bool) {
@@ -106,6 +116,7 @@ func findAndReplaceProjectVersion(objectsMap map[string]any, projectContent stri
 }
 
 func findObjectKey(objectsMap map[string]any, bundleIDList []string) []string {
+	globalSettings := collectBuildSettings(objectsMap)
 	var objectKeyList []string
 	for objectKey, object := range objectsMap {
 		buildSettings := object.(map[string]any)["buildSettings"]
@@ -116,11 +127,49 @@ func findObjectKey(objectsMap map[string]any, bundleIDList []string) []string {
 		if bundleIDObject == nil {
 			continue
 		}
-		if common.Contains(bundleIDList, bundleIDObject.(string)) {
+		bundleID := expandBuildVariables(bundleIDObject.(string), globalSettings)
+		if common.Contains(bundleIDList, bundleID) {
 			objectKeyList = append(objectKeyList, objectKey)
 		}
 	}
 	return objectKeyList
+}
+
+func collectBuildSettings(objectsMap map[string]any) map[string]string {
+	settings := make(map[string]string)
+	for _, object := range objectsMap {
+		buildSettings, loaded := object.(map[string]any)["buildSettings"].(map[string]any)
+		if !loaded {
+			continue
+		}
+		for key, value := range buildSettings {
+			valueString, isString := value.(string)
+			if !isString {
+				continue
+			}
+			settings[key] = valueString
+		}
+	}
+	return settings
+}
+
+var buildVariableRegexp = regexp.MustCompile(`\$[({]([A-Za-z0-9_]+)[)}]`)
+
+func expandBuildVariables(value string, settings map[string]string) string {
+	for {
+		expanded := buildVariableRegexp.ReplaceAllStringFunc(value, func(match string) string {
+			name := buildVariableRegexp.FindStringSubmatch(match)[1]
+			replacement, loaded := settings[name]
+			if !loaded {
+				return match
+			}
+			return replacement
+		})
+		if expanded == value {
+			return expanded
+		}
+		value = expanded
+	}
 }
 
 func findObjectKeyByDirectory(objectsMap map[string]any, directoryList []string) []string {

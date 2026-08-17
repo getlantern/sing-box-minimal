@@ -23,7 +23,7 @@ var (
 
 func (c *CacheFile) FakeIPMetadata() *adapter.FakeIPMetadata {
 	var metadata adapter.FakeIPMetadata
-	err := c.DB.Batch(func(tx *bbolt.Tx) error {
+	err := c.batch(func(tx *bbolt.Tx) error {
 		bucket := tx.Bucket(bucketFakeIP)
 		if bucket == nil {
 			return os.ErrNotExist
@@ -45,7 +45,7 @@ func (c *CacheFile) FakeIPMetadata() *adapter.FakeIPMetadata {
 }
 
 func (c *CacheFile) FakeIPSaveMetadata(metadata *adapter.FakeIPMetadata) error {
-	return c.DB.Batch(func(tx *bbolt.Tx) error {
+	return c.batch(func(tx *bbolt.Tx) error {
 		bucket, err := tx.CreateBucketIfNotExists(bucketFakeIP)
 		if err != nil {
 			return err
@@ -59,9 +59,17 @@ func (c *CacheFile) FakeIPSaveMetadata(metadata *adapter.FakeIPMetadata) error {
 }
 
 func (c *CacheFile) FakeIPSaveMetadataAsync(metadata *adapter.FakeIPMetadata) {
+	c.saveMetadataAccess.Lock()
+	defer c.saveMetadataAccess.Unlock()
+	c.saveMetadata = metadata
 	if c.saveMetadataTimer == nil {
 		c.saveMetadataTimer = time.AfterFunc(C.FakeIPMetadataSaveInterval, func() {
-			_ = c.FakeIPSaveMetadata(metadata)
+			c.saveMetadataAccess.Lock()
+			savedMetadata := c.saveMetadata
+			c.saveMetadataAccess.Unlock()
+			if savedMetadata != nil {
+				_ = c.FakeIPSaveMetadata(savedMetadata)
+			}
 		})
 	} else {
 		c.saveMetadataTimer.Reset(C.FakeIPMetadataSaveInterval)
@@ -69,7 +77,7 @@ func (c *CacheFile) FakeIPSaveMetadataAsync(metadata *adapter.FakeIPMetadata) {
 }
 
 func (c *CacheFile) FakeIPStore(address netip.Addr, domain string) error {
-	return c.DB.Batch(func(tx *bbolt.Tx) error {
+	return c.batch(func(tx *bbolt.Tx) error {
 		bucket, err := tx.CreateBucketIfNotExists(bucketFakeIP)
 		if err != nil {
 			return err
@@ -136,7 +144,7 @@ func (c *CacheFile) FakeIPLoad(address netip.Addr) (string, bool) {
 		return cachedDomain, true
 	}
 	var domain string
-	_ = c.DB.View(func(tx *bbolt.Tx) error {
+	_ = c.view(func(tx *bbolt.Tx) error {
 		bucket := tx.Bucket(bucketFakeIP)
 		if bucket == nil {
 			return nil
@@ -163,7 +171,7 @@ func (c *CacheFile) FakeIPLoadDomain(domain string, isIPv6 bool) (netip.Addr, bo
 		return cachedAddress, true
 	}
 	var address netip.Addr
-	_ = c.DB.View(func(tx *bbolt.Tx) error {
+	_ = c.view(func(tx *bbolt.Tx) error {
 		var bucket *bbolt.Bucket
 		if isIPv6 {
 			bucket = tx.Bucket(bucketFakeIPDomain6)
@@ -180,7 +188,7 @@ func (c *CacheFile) FakeIPLoadDomain(domain string, isIPv6 bool) (netip.Addr, bo
 }
 
 func (c *CacheFile) FakeIPReset() error {
-	return c.DB.Batch(func(tx *bbolt.Tx) error {
+	return c.batch(func(tx *bbolt.Tx) error {
 		err := tx.DeleteBucket(bucketFakeIP)
 		if err != nil {
 			return err

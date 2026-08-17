@@ -26,6 +26,8 @@ func RegisterOutbound(registry *outbound.Registry) {
 	outbound.Register[option.TrojanOutboundOptions](registry, C.TypeTrojan, NewOutbound)
 }
 
+var _ adapter.OutboundWithMultiplex = (*Outbound)(nil)
+
 type Outbound struct {
 	outbound.Adapter
 	logger          logger.ContextLogger
@@ -34,6 +36,7 @@ type Outbound struct {
 	key             [56]byte
 	multiplexDialer *mux.Client
 	tlsConfig       tls.Config
+	tlsDialer       tls.Dialer
 	transport       adapter.V2RayClientTransport
 }
 
@@ -50,10 +53,18 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		key:        trojan.Key(options.Password),
 	}
 	if options.TLS != nil {
-		outbound.tlsConfig, err = tls.NewClient(ctx, options.Server, common.PtrValueOrDefault(options.TLS))
+		outbound.tlsConfig, err = tls.NewClientWithOptions(tls.ClientOptions{
+			Context:       ctx,
+			Logger:        logger,
+			ServerAddress: options.Server,
+			Options:       common.PtrValueOrDefault(options.TLS),
+			KTLSCompatible: common.PtrValueOrDefault(options.Transport).Type == "" &&
+				!common.PtrValueOrDefault(options.Multiplex).Enabled,
+		})
 		if err != nil {
 			return nil, err
 		}
+		outbound.tlsDialer = tls.NewDialer(outboundDialer, outbound.tlsConfig)
 	}
 	if options.Transport != nil {
 		outbound.transport, err = v2ray.NewClientTransport(ctx, outbound.dialer, outbound.serverAddr, common.PtrValueOrDefault(options.Transport), outbound.tlsConfig)
@@ -98,6 +109,10 @@ func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 	}
 }
 
+func (h *Outbound) MultiplexEnabled() bool {
+	return h.multiplexDialer != nil
+}
+
 func (h *Outbound) InterfaceUpdated() {
 	if h.transport != nil {
 		h.transport.Close()
@@ -121,11 +136,10 @@ func (h *trojanDialer) DialContext(ctx context.Context, network string, destinat
 	var err error
 	if h.transport != nil {
 		conn, err = h.transport.DialContext(ctx)
+	} else if h.tlsDialer != nil {
+		conn, err = h.tlsDialer.DialTLSContext(ctx, h.serverAddr)
 	} else {
 		conn, err = h.dialer.DialContext(ctx, N.NetworkTCP, h.serverAddr)
-		if err == nil && h.tlsConfig != nil {
-			conn, err = tls.ClientHandshake(ctx, conn, h.tlsConfig)
-		}
 	}
 	if err != nil {
 		common.Close(conn)
