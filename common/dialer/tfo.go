@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/sagernet/sing/common"
+	"github.com/sagernet/sing-box/common/connectiondiag"
 	"github.com/sagernet/sing/common/bufio"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
@@ -22,12 +22,22 @@ type slowOpenConn struct {
 	ctx         context.Context
 	network     string
 	destination M.Socksaddr
-	conn        atomic.Pointer[net.TCPConn]
+	conn        atomic.Pointer[diagnosticTCPConn]
 	create      chan struct{}
 	done        chan struct{}
 	access      sync.Mutex
 	closeOnce   sync.Once
 	err         error
+}
+
+type diagnosticTCPConn struct{ net.Conn }
+
+func (c *slowOpenConn) currentConn() net.Conn {
+	v := c.conn.Load()
+	if v == nil {
+		return nil
+	}
+	return v.Conn
 }
 
 func DialSlowContext(dialer *tfo.Dialer, ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
@@ -50,7 +60,7 @@ func DialSlowContext(dialer *tfo.Dialer, ctx context.Context, network string, de
 }
 
 func (c *slowOpenConn) Read(b []byte) (n int, err error) {
-	conn := c.conn.Load()
+	conn := c.currentConn()
 	if conn != nil {
 		return conn.Read(b)
 	}
@@ -59,14 +69,14 @@ func (c *slowOpenConn) Read(b []byte) (n int, err error) {
 		if c.err != nil {
 			return 0, c.err
 		}
-		return c.conn.Load().Read(b)
+		return c.currentConn().Read(b)
 	case <-c.done:
 		return 0, os.ErrClosed
 	}
 }
 
 func (c *slowOpenConn) Write(b []byte) (n int, err error) {
-	tcpConn := c.conn.Load()
+	tcpConn := c.currentConn()
 	if tcpConn != nil {
 		return tcpConn.Write(b)
 	}
@@ -77,16 +87,20 @@ func (c *slowOpenConn) Write(b []byte) (n int, err error) {
 		if c.err != nil {
 			return 0, c.err
 		}
-		return c.conn.Load().Write(b)
+		return c.currentConn().Write(b)
 	case <-c.done:
 		return 0, os.ErrClosed
 	default:
 	}
+	done := connectiondiag.Begin(connectiondiag.LabelFrom(c.ctx), c.network, c.destination.String())
 	conn, err := c.dialer.DialContext(c.ctx, c.network, c.destination.String(), b)
+	if done != nil {
+		conn = done(conn, err)
+	}
 	if err != nil {
 		c.err = err
 	} else {
-		c.conn.Store(conn.(*net.TCPConn))
+		c.conn.Store(&diagnosticTCPConn{conn})
 	}
 	n = len(b)
 	close(c.create)
@@ -96,7 +110,7 @@ func (c *slowOpenConn) Write(b []byte) (n int, err error) {
 func (c *slowOpenConn) Close() error {
 	c.closeOnce.Do(func() {
 		close(c.done)
-		conn := c.conn.Load()
+		conn := c.currentConn()
 		if conn != nil {
 			conn.Close()
 		}
@@ -105,7 +119,7 @@ func (c *slowOpenConn) Close() error {
 }
 
 func (c *slowOpenConn) LocalAddr() net.Addr {
-	conn := c.conn.Load()
+	conn := c.currentConn()
 	if conn == nil {
 		return M.Socksaddr{}
 	}
@@ -113,7 +127,7 @@ func (c *slowOpenConn) LocalAddr() net.Addr {
 }
 
 func (c *slowOpenConn) RemoteAddr() net.Addr {
-	conn := c.conn.Load()
+	conn := c.currentConn()
 	if conn == nil {
 		return M.Socksaddr{}
 	}
@@ -121,7 +135,7 @@ func (c *slowOpenConn) RemoteAddr() net.Addr {
 }
 
 func (c *slowOpenConn) SetDeadline(t time.Time) error {
-	conn := c.conn.Load()
+	conn := c.currentConn()
 	if conn == nil {
 		return os.ErrInvalid
 	}
@@ -129,7 +143,7 @@ func (c *slowOpenConn) SetDeadline(t time.Time) error {
 }
 
 func (c *slowOpenConn) SetReadDeadline(t time.Time) error {
-	conn := c.conn.Load()
+	conn := c.currentConn()
 	if conn == nil {
 		return os.ErrInvalid
 	}
@@ -137,7 +151,7 @@ func (c *slowOpenConn) SetReadDeadline(t time.Time) error {
 }
 
 func (c *slowOpenConn) SetWriteDeadline(t time.Time) error {
-	conn := c.conn.Load()
+	conn := c.currentConn()
 	if conn == nil {
 		return os.ErrInvalid
 	}
@@ -145,23 +159,23 @@ func (c *slowOpenConn) SetWriteDeadline(t time.Time) error {
 }
 
 func (c *slowOpenConn) Upstream() any {
-	return common.PtrOrNil(c.conn.Load())
+	return c.currentConn()
 }
 
 func (c *slowOpenConn) ReaderReplaceable() bool {
-	return c.conn.Load() != nil
+	return c.currentConn() != nil
 }
 
 func (c *slowOpenConn) WriterReplaceable() bool {
-	return c.conn.Load() != nil
+	return c.currentConn() != nil
 }
 
 func (c *slowOpenConn) NeedHandshake() bool {
-	return c.conn.Load() == nil
+	return c.currentConn() == nil
 }
 
 func (c *slowOpenConn) WriteTo(w io.Writer) (n int64, err error) {
-	conn := c.conn.Load()
+	conn := c.currentConn()
 	if conn == nil {
 		select {
 		case <-c.create:
@@ -172,5 +186,5 @@ func (c *slowOpenConn) WriteTo(w io.Writer) (n int64, err error) {
 			return 0, c.err
 		}
 	}
-	return bufio.Copy(w, c.conn.Load())
+	return bufio.Copy(w, c.currentConn())
 }
