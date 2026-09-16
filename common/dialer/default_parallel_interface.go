@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
-	"github.com/sagernet/sing-box/common/connectiondiag"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/control"
@@ -36,7 +35,7 @@ func (d *DefaultDialer) dialParallelInterface(ctx context.Context, dialer net.Di
 		if defaultInterface == nil || iif.Index != defaultInterface.Index {
 			perNetDialer.Control = control.Append(perNetDialer.Control, control.BindToInterface(nil, iif.Name, iif.Index))
 		}
-		done := connectiondiag.Begin(d.diagnosticLabel, network, addr)
+		done := d.observation.Begin(network, addr)
 		conn, err := perNetDialer.DialContext(ctx, network, addr)
 		if done != nil {
 			conn = done(conn, err)
@@ -115,7 +114,7 @@ func (d *DefaultDialer) dialParallelInterfaceFastFallback(ctx context.Context, d
 		if defaultInterface == nil || iif.Index != defaultInterface.Index {
 			perNetDialer.Control = control.Append(perNetDialer.Control, control.BindToInterface(nil, iif.Name, iif.Index))
 		}
-		done := connectiondiag.Begin(d.diagnosticLabel, network, addr)
+		done := d.observation.Begin(network, addr)
 		conn, err := perNetDialer.DialContext(ctx, network, addr)
 		if done != nil {
 			conn = done(conn, err)
@@ -157,7 +156,7 @@ func (d *DefaultDialer) dialParallelInterfaceFastFallback(ctx context.Context, d
 	return nil, false, E.Errors(errors...)
 }
 
-func (d *DefaultDialer) listenSerialInterfacePacket(ctx context.Context, listener net.ListenConfig, network string, addr string, diagnosticEndpoint string, strategy C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType, fallbackDelay time.Duration) (net.PacketConn, error) {
+func (d *DefaultDialer) listenSerialInterfacePacket(ctx context.Context, listener net.ListenConfig, network string, addr string, observedEndpoint string, strategy C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType, fallbackDelay time.Duration) (net.PacketConn, error) {
 	primaryInterfaces, fallbackInterfaces := selectInterfaces(d.networkManager, strategy, interfaceType, fallbackInterfaceType)
 	if len(primaryInterfaces)+len(fallbackInterfaces) == 0 {
 		return nil, E.New("no available network interface")
@@ -169,7 +168,7 @@ func (d *DefaultDialer) listenSerialInterfacePacket(ctx context.Context, listene
 		if defaultInterface == nil || primaryInterface.Index != defaultInterface.Index {
 			perNetListener.Control = control.Append(perNetListener.Control, control.BindToInterface(nil, primaryInterface.Name, primaryInterface.Index))
 		}
-		done := connectiondiag.BeginPacket(d.diagnosticLabel, diagnosticEndpoint)
+		done := d.observation.BeginPacket(observedEndpoint)
 		conn, err := perNetListener.ListenPacket(ctx, network, addr)
 		if done != nil {
 			done(err)
@@ -184,7 +183,7 @@ func (d *DefaultDialer) listenSerialInterfacePacket(ctx context.Context, listene
 		if defaultInterface == nil || fallbackInterface.Index != defaultInterface.Index {
 			perNetListener.Control = control.Append(perNetListener.Control, control.BindToInterface(nil, fallbackInterface.Name, fallbackInterface.Index))
 		}
-		done := connectiondiag.BeginPacket(d.diagnosticLabel, diagnosticEndpoint)
+		done := d.observation.BeginPacket(observedEndpoint)
 		conn, err := perNetListener.ListenPacket(ctx, network, addr)
 		if done != nil {
 			done(err)

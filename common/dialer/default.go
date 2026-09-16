@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
-	"github.com/sagernet/sing-box/common/connectiondiag"
 	"github.com/sagernet/sing-box/common/listener"
+	"github.com/sagernet/sing-box/common/socketobserver"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common"
@@ -29,7 +29,7 @@ var (
 )
 
 type DefaultDialer struct {
-	diagnosticLabel        connectiondiag.Label
+	observation            socketobserver.Binding
 	dialer4                tfo.Dialer
 	dialer6                tfo.Dialer
 	udpDialer4             net.Dialer
@@ -210,7 +210,7 @@ func NewDefault(ctx context.Context, options option.DialerOptions) (*DefaultDial
 	tcpDialer4 := tfo.Dialer{Dialer: dialer4, DisableTFO: !options.TCPFastOpen}
 	tcpDialer6 := tfo.Dialer{Dialer: dialer6, DisableTFO: !options.TCPFastOpen}
 	return &DefaultDialer{
-		diagnosticLabel:        connectiondiag.LabelFrom(ctx),
+		observation:            socketobserver.FromContext(ctx),
 		dialer4:                tcpDialer4,
 		dialer6:                tcpDialer6,
 		udpDialer4:             udpDialer4,
@@ -248,7 +248,7 @@ func setMarkWrapper(networkManager adapter.NetworkManager, mark uint32, isDefaul
 
 func (d *DefaultDialer) DialContext(ctx context.Context, network string, address M.Socksaddr) (conn net.Conn, err error) {
 	if d.networkStrategy == nil && (d.dialer4.DisableTFO || N.NetworkName(network) != N.NetworkTCP) {
-		if done := connectiondiag.Begin(d.diagnosticLabel, network, address.String()); done != nil {
+		if done := d.observation.Begin(network, address.String()); done != nil {
 			defer func() { conn = done(conn, err) }()
 		}
 	}
@@ -268,9 +268,9 @@ func (d *DefaultDialer) DialContext(ctx context.Context, network string, address
 				}
 			}
 			if !address.IsIPv6() {
-				return DialSlowContext(&d.dialer4, connectiondiag.WithLabel(ctx, d.diagnosticLabel.Protocol, d.diagnosticLabel.Tag), network, address)
+				return DialSlowContext(&d.dialer4, d.observation.Context(ctx), network, address)
 			} else {
-				return DialSlowContext(&d.dialer6, connectiondiag.WithLabel(ctx, d.diagnosticLabel.Protocol, d.diagnosticLabel.Tag), network, address)
+				return DialSlowContext(&d.dialer6, d.observation.Context(ctx), network, address)
 			}
 		}))
 	} else {
@@ -329,7 +329,7 @@ func (d *DefaultDialer) DialParallelInterface(ctx context.Context, network strin
 
 func (d *DefaultDialer) ListenPacket(ctx context.Context, destination M.Socksaddr) (result net.PacketConn, resultErr error) {
 	if d.networkStrategy == nil {
-		if done := connectiondiag.BeginPacket(d.diagnosticLabel, destination.String()); done != nil {
+		if done := d.observation.BeginPacket(destination.String()); done != nil {
 			defer func() { done(resultErr) }()
 		}
 	}

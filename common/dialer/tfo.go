@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/sagernet/sing-box/common/connectiondiag"
+	"github.com/sagernet/sing-box/common/socketobserver"
 	"github.com/sagernet/sing/common/bufio"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
@@ -22,7 +22,7 @@ type slowOpenConn struct {
 	ctx         context.Context
 	network     string
 	destination M.Socksaddr
-	conn        atomic.Pointer[diagnosticTCPConn]
+	conn        atomic.Pointer[observedTCPConn]
 	create      chan struct{}
 	done        chan struct{}
 	access      sync.Mutex
@@ -30,7 +30,7 @@ type slowOpenConn struct {
 	err         error
 }
 
-type diagnosticTCPConn struct{ net.Conn }
+type observedTCPConn struct{ net.Conn }
 
 func (c *slowOpenConn) currentConn() net.Conn {
 	v := c.conn.Load()
@@ -92,7 +92,7 @@ func (c *slowOpenConn) Write(b []byte) (n int, err error) {
 		return 0, os.ErrClosed
 	default:
 	}
-	done := connectiondiag.Begin(connectiondiag.LabelFrom(c.ctx), c.network, c.destination.String())
+	done := socketobserver.FromContext(c.ctx).Begin(c.network, c.destination.String())
 	conn, err := c.dialer.DialContext(c.ctx, c.network, c.destination.String(), b)
 	if done != nil {
 		conn = done(conn, err)
@@ -100,7 +100,7 @@ func (c *slowOpenConn) Write(b []byte) (n int, err error) {
 	if err != nil {
 		c.err = err
 	} else {
-		c.conn.Store(&diagnosticTCPConn{conn})
+		c.conn.Store(&observedTCPConn{conn})
 	}
 	n = len(b)
 	close(c.create)
