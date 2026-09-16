@@ -4,12 +4,15 @@ package socketobserver
 import (
 	"context"
 	"net"
+	"sync/atomic"
 )
 
 // Label identifies the outbound that owns a socket attempt.
 type Label struct {
 	Protocol string
 	Tag      string
+	// DialGroup groups competing interface attempts; zero means ungrouped.
+	DialGroup uint64
 }
 
 // Observer receives physical dial and UDP socket-setup attempts.
@@ -43,7 +46,7 @@ func WithObserver(ctx context.Context, observer Observer) context.Context {
 // WithLabel associates subsequent socket construction with an outbound.
 func WithLabel(ctx context.Context, protocol, tag string) context.Context {
 	b := FromContext(ctx)
-	b.label = Label{protocol, tag}
+	b.label = Label{Protocol: protocol, Tag: tag}
 	return context.WithValue(ctx, contextKey{}, b)
 }
 
@@ -55,7 +58,18 @@ func (b Binding) Context(ctx context.Context) context.Context {
 	return context.WithValue(ctx, contextKey{}, b)
 }
 
+var nextGroup atomic.Uint64
+
+// NewGroup returns a binding with a fresh process-local interface attempt group.
+func (b Binding) NewGroup() Binding {
+	if b.observer != nil {
+		b.label.DialGroup = nextGroup.Add(1)
+	}
+	return b
+}
+
 // Begin returns a completion hook for a physical dial, or nil when the attempt is not observed.
+// Raw socket I/O (including splice) may bypass Read and Write on the returned wrapper.
 func (b Binding) Begin(network, endpoint string) func(net.Conn, error) net.Conn {
 	if b.observer == nil {
 		return nil

@@ -61,3 +61,24 @@ func TestDisabledBindingMasksRequestObserver(t *testing.T) {
 		t.Fatal("disabled construction binding inherited request observer")
 	}
 }
+
+func TestInterfaceGroupIsolation(t *testing.T) {
+	t.Parallel()
+	o := &testObserver{}
+	base := FromContext(WithLabel(WithObserver(context.Background(), o), "tls", "route"))
+	first, second := base.NewGroup(), base.NewGroup()
+	first.Begin("tcp", "one:443")
+	group := o.label.DialGroup
+	first.Begin("tcp", "two:443")
+	if group == 0 || o.label.DialGroup != group {
+		t.Fatal("sibling attempts lost group")
+	}
+	second.Begin("tcp", "one:443")
+	if o.label.DialGroup == group {
+		t.Fatal("independent races share group")
+	}
+	base.Begin("tcp", "one:443")
+	if o.label.DialGroup != 0 || (Binding{}).NewGroup().label.DialGroup != 0 {
+		t.Fatal("group mutated base or disabled binding")
+	}
+}
