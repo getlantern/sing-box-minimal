@@ -247,18 +247,18 @@ func setMarkWrapper(networkManager adapter.NetworkManager, mark uint32, isDefaul
 }
 
 func (d *DefaultDialer) DialContext(ctx context.Context, network string, address M.Socksaddr) (conn net.Conn, err error) {
-	if d.networkStrategy == nil && (d.dialer4.DisableTFO || N.NetworkName(network) != N.NetworkTCP) {
-		if done := d.observation.Begin(network, address.String()); done != nil {
-			defer func() { conn = done(conn, err) }()
-		}
-	}
 	if !address.IsValid() {
 		return nil, E.New("invalid address")
 	} else if address.IsDomain() {
 		return nil, E.New("domain not resolved")
 	}
 	if d.networkStrategy == nil {
-		return d.trackConn(listener.ListenNetworkNamespace[net.Conn](d.netns, func() (net.Conn, error) {
+		return d.trackConn(listener.ListenNetworkNamespace[net.Conn](d.netns, func() (conn net.Conn, err error) {
+			if d.dialer4.DisableTFO || N.NetworkName(network) != N.NetworkTCP {
+				if done := d.observation.Begin(network, address.String()); done != nil {
+					defer func() { conn = done(conn, err) }()
+				}
+			}
 			switch N.NetworkName(network) {
 			case N.NetworkUDP:
 				if !address.IsIPv6() {
