@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/socketobserver"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -63,7 +64,7 @@ func (r *Registry) CreateOutbound(ctx context.Context, router adapter.Router, lo
 	if !loaded {
 		return nil, E.New("outbound type not found: " + outboundType)
 	}
-	return constructor(ctx, router, logger, tag, options)
+	return constructor(socketobserver.WithLabel(ctx, outboundType, tag), router, logger, tag, options)
 }
 
 func (r *Registry) register(outboundType string, optionsConstructor optionsConstructorFunc, constructor constructorFunc) {

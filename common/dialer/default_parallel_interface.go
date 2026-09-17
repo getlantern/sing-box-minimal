@@ -14,6 +14,7 @@ import (
 )
 
 func (d *DefaultDialer) dialParallelInterface(ctx context.Context, dialer net.Dialer, network string, addr string, strategy C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType, fallbackDelay time.Duration) (net.Conn, bool, error) {
+	observation := d.observation.NewGroup()
 	primaryInterfaces, fallbackInterfaces := selectInterfaces(d.networkManager, strategy, interfaceType, fallbackInterfaceType)
 	if len(primaryInterfaces)+len(fallbackInterfaces) == 0 {
 		return nil, false, E.New("no available network interface")
@@ -35,7 +36,11 @@ func (d *DefaultDialer) dialParallelInterface(ctx context.Context, dialer net.Di
 		if defaultInterface == nil || iif.Index != defaultInterface.Index {
 			perNetDialer.Control = control.Append(perNetDialer.Control, control.BindToInterface(nil, iif.Name, iif.Index))
 		}
+		done := observation.Begin(network, addr)
 		conn, err := perNetDialer.DialContext(ctx, network, addr)
+		if done != nil {
+			conn = done(conn, err)
+		}
 		if err != nil {
 			select {
 			case results <- dialResult{error: E.Cause(err, "dial ", iif.Name, " (", iif.Index, ")"), primary: primary}:
@@ -88,6 +93,7 @@ func (d *DefaultDialer) dialParallelInterface(ctx context.Context, dialer net.Di
 }
 
 func (d *DefaultDialer) dialParallelInterfaceFastFallback(ctx context.Context, dialer net.Dialer, network string, addr string, strategy C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType, fallbackDelay time.Duration, resetFastFallback func(time.Time)) (net.Conn, bool, error) {
+	observation := d.observation.NewGroup()
 	primaryInterfaces, fallbackInterfaces := selectInterfaces(d.networkManager, strategy, interfaceType, fallbackInterfaceType)
 	if len(primaryInterfaces)+len(fallbackInterfaces) == 0 {
 		return nil, false, E.New("no available network interface")
@@ -110,7 +116,11 @@ func (d *DefaultDialer) dialParallelInterfaceFastFallback(ctx context.Context, d
 		if defaultInterface == nil || iif.Index != defaultInterface.Index {
 			perNetDialer.Control = control.Append(perNetDialer.Control, control.BindToInterface(nil, iif.Name, iif.Index))
 		}
+		done := observation.Begin(network, addr)
 		conn, err := perNetDialer.DialContext(ctx, network, addr)
+		if done != nil {
+			conn = done(conn, err)
+		}
 		if err != nil {
 			select {
 			case results <- dialResult{error: E.Cause(err, "dial ", iif.Name, " (", iif.Index, ")"), primary: primary}:
@@ -148,7 +158,8 @@ func (d *DefaultDialer) dialParallelInterfaceFastFallback(ctx context.Context, d
 	return nil, false, E.Errors(errors...)
 }
 
-func (d *DefaultDialer) listenSerialInterfacePacket(ctx context.Context, listener net.ListenConfig, network string, addr string, strategy C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType, fallbackDelay time.Duration) (net.PacketConn, error) {
+func (d *DefaultDialer) listenSerialInterfacePacket(ctx context.Context, listener net.ListenConfig, network string, addr string, observedEndpoint string, strategy C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType, fallbackDelay time.Duration) (net.PacketConn, error) {
+	observation := d.observation.NewGroup()
 	primaryInterfaces, fallbackInterfaces := selectInterfaces(d.networkManager, strategy, interfaceType, fallbackInterfaceType)
 	if len(primaryInterfaces)+len(fallbackInterfaces) == 0 {
 		return nil, E.New("no available network interface")
@@ -160,7 +171,11 @@ func (d *DefaultDialer) listenSerialInterfacePacket(ctx context.Context, listene
 		if defaultInterface == nil || primaryInterface.Index != defaultInterface.Index {
 			perNetListener.Control = control.Append(perNetListener.Control, control.BindToInterface(nil, primaryInterface.Name, primaryInterface.Index))
 		}
+		done := observation.BeginPacket(observedEndpoint)
 		conn, err := perNetListener.ListenPacket(ctx, network, addr)
+		if done != nil {
+			done(err)
+		}
 		if err == nil {
 			return conn, nil
 		}
@@ -171,7 +186,11 @@ func (d *DefaultDialer) listenSerialInterfacePacket(ctx context.Context, listene
 		if defaultInterface == nil || fallbackInterface.Index != defaultInterface.Index {
 			perNetListener.Control = control.Append(perNetListener.Control, control.BindToInterface(nil, fallbackInterface.Name, fallbackInterface.Index))
 		}
+		done := observation.BeginPacket(observedEndpoint)
 		conn, err := perNetListener.ListenPacket(ctx, network, addr)
+		if done != nil {
+			done(err)
+		}
 		if err == nil {
 			return conn, nil
 		}
