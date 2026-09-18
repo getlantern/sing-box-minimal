@@ -40,6 +40,7 @@ type darwinConnectionEntry struct {
 	remotePort uint16
 	pid        uint32
 	uid        int32
+	dualStack  bool
 }
 
 type darwinConnectionMatchKind uint8
@@ -186,6 +187,7 @@ func parseDarwinConnectionEntry(inp []byte, so []byte) (darwinConnectionEntry, b
 		uid:        int32(binary.NativeEndian.Uint32(so[darwinXsocketUID : darwinXsocketUID+4])),
 	}
 	flag := inp[darwinXinpcbVFlag]
+	entry.dualStack = flag&0x3 == 0x3
 	switch {
 	case flag&0x1 != 0:
 		entry.remoteAddr = netip.AddrFrom4([4]byte(inp[darwinXinpcbForeignAddr+darwinXinpcbIPv4Addr : darwinXinpcbForeignAddr+darwinXinpcbIPv4Addr+4]))
@@ -210,7 +212,14 @@ func matchDarwinConnectionEntry(entries []darwinConnectionEntry, network string,
 	var wildcardFallback darwinConnectionEntry
 	var hasWildcardFallback bool
 	for _, entry := range entries {
-		if entry.localPort != source.Port() || sourceAddr.BitLen() != entry.localAddr.BitLen() {
+		if entry.localPort != source.Port() {
+			continue
+		}
+		// Darwin reports dual-stack wildcard sockets in the IPv4 layout even
+		// when an unconnected UDP send uses IPv6.
+		dualStackWildcard := network == N.NetworkUDP && entry.dualStack &&
+			entry.localAddr.IsUnspecified() && entry.remotePort == 0
+		if sourceAddr.BitLen() != entry.localAddr.BitLen() && !dualStackWildcard {
 			continue
 		}
 		if entry.localAddr == sourceAddr && destination.IsValid() && entry.remotePort == destination.Port() && entry.remoteAddr == destination.Addr() {
