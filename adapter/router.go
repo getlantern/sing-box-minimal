@@ -90,8 +90,9 @@ func (c *HTTPStartContext) HTTPClient(detour string, dialer N.Dialer) *http.Clie
 	}
 	httpClient := &http.Client{
 		Transport: &http.Transport{
-			ForceAttemptHTTP2:   true,
-			TLSHandshakeTimeout: C.TCPTimeout,
+			ForceAttemptHTTP2:     true,
+			TLSHandshakeTimeout:   C.TCPTimeout,
+			ResponseHeaderTimeout: C.TCPTimeout,
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 				return dialer.DialContext(ctx, network, M.ParseSocksaddr(addr))
 			},

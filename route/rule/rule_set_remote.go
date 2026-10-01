@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -33,6 +34,13 @@ import (
 )
 
 var _ adapter.RuleSet = (*RemoteRuleSet)(nil)
+
+var (
+	initialFetchTimeout = C.StartTimeout
+	fetchStallTimeout   = C.TCPTimeout
+)
+
+var errFetchStalled = E.New("rule-set download stalled")
 
 type RemoteRuleSet struct {
 	ctx            context.Context
@@ -106,7 +114,9 @@ func (s *RemoteRuleSet) StartContext(ctx context.Context, startContext *adapter.
 		}
 	}
 	if s.lastUpdated.IsZero() {
-		err := s.fetch(ctx, startContext)
+		fetchCtx, cancel := context.WithTimeout(ctx, initialFetchTimeout)
+		err := s.fetch(fetchCtx, startContext)
+		cancel()
 		if err != nil {
 			// Non-fatal: on Android the network interface may not be available
 			// during VPN initialization. Start without rule-sets and retry in
@@ -257,8 +267,9 @@ func (s *RemoteRuleSet) fetch(ctx context.Context, startContext *adapter.HTTPSta
 	} else {
 		httpClient = &http.Client{
 			Transport: &http.Transport{
-				ForceAttemptHTTP2:   true,
-				TLSHandshakeTimeout: C.TCPTimeout,
+				ForceAttemptHTTP2:     true,
+				TLSHandshakeTimeout:   C.TCPTimeout,
+				ResponseHeaderTimeout: C.TCPTimeout,
 				DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 					return s.dialer.DialContext(ctx, network, M.ParseSocksaddr(addr))
 				},
@@ -276,6 +287,8 @@ func (s *RemoteRuleSet) fetch(ctx context.Context, startContext *adapter.HTTPSta
 	if s.lastEtag != "" {
 		request.Header.Set("If-None-Match", s.lastEtag)
 	}
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
 	response, err := httpClient.Do(request.WithContext(ctx))
 	if err != nil {
 		return err
@@ -300,9 +313,14 @@ func (s *RemoteRuleSet) fetch(ctx context.Context, startContext *adapter.HTTPSta
 	default:
 		return E.New("unexpected status: ", response.Status)
 	}
-	content, err := io.ReadAll(response.Body)
+	stallTimer := time.AfterFunc(fetchStallTimeout, func() { cancel(errFetchStalled) })
+	content, err := io.ReadAll(&stallReader{reader: response.Body, timer: stallTimer, timeout: fetchStallTimeout})
+	stallTimer.Stop()
 	if err != nil {
 		response.Body.Close()
+		if errors.Is(context.Cause(ctx), errFetchStalled) {
+			return errFetchStalled
+		}
 		return err
 	}
 	err = s.loadBytes(content)
@@ -355,4 +373,18 @@ func (s *RemoteRuleSet) matchStatesWithBase(metadata *adapter.InboundContext, ba
 		stateSet = stateSet.merge(matchHeadlessRuleStatesWithBase(rule, &nestedMetadata, base))
 	}
 	return stateSet
+}
+
+type stallReader struct {
+	reader  io.Reader
+	timer   *time.Timer
+	timeout time.Duration
+}
+
+func (r *stallReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	if n > 0 {
+		r.timer.Reset(r.timeout)
+	}
+	return n, err
 }
