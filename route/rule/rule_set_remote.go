@@ -60,6 +60,7 @@ type RemoteRuleSet struct {
 	pauseManager   pause.Manager
 	callbacks      list.List[adapter.RuleSetUpdateCallback]
 	refs           atomic.Int32
+	closed         bool
 }
 
 func NewRemoteRuleSet(ctx context.Context, logger logger.ContextLogger, options option.RuleSet) *RemoteRuleSet {
@@ -86,7 +87,14 @@ func (s *RemoteRuleSet) Name() string {
 }
 
 func (s *RemoteRuleSet) String() string {
-	return strings.Join(F.MapToString(s.rules), " ")
+	return strings.Join(F.MapToString(s.rulesSnapshot()), " ")
+}
+
+// rulesSnapshot remains valid across reloads because published rules are immutable.
+func (s *RemoteRuleSet) rulesSnapshot() []adapter.HeadlessRule {
+	s.access.RLock()
+	defer s.access.RUnlock()
+	return s.rules
 }
 
 func (s *RemoteRuleSet) StartContext(ctx context.Context, startContext *adapter.HTTPStartContext) error {
@@ -170,6 +178,8 @@ func (s *RemoteRuleSet) DecRef() {
 }
 
 func (s *RemoteRuleSet) Cleanup() {
+	s.access.Lock()
+	defer s.access.Unlock()
 	if s.refs.Load() == 0 {
 		s.rules = nil
 	}
@@ -218,6 +228,10 @@ func (s *RemoteRuleSet) loadBytes(content []byte) error {
 		}
 	}
 	s.access.Lock()
+	if s.closed {
+		s.access.Unlock()
+		return nil
+	}
 	s.metadata.ContainsProcessRule = HasHeadlessRule(plainRuleSet.Rules, isProcessHeadlessRule)
 	s.metadata.ContainsWIFIRule = HasHeadlessRule(plainRuleSet.Rules, isWIFIHeadlessRule)
 	s.metadata.ContainsIPCIDRRule = HasHeadlessRule(plainRuleSet.Rules, isIPCIDRHeadlessRule)
@@ -235,8 +249,8 @@ func (s *RemoteRuleSet) loopUpdate() {
 		err := s.fetch(s.ctx, nil)
 		if err != nil {
 			s.logger.Error("fetch rule-set ", s.options.Tag, ": ", err)
-		} else if s.refs.Load() == 0 {
-			s.rules = nil
+		} else {
+			s.Cleanup()
 		}
 	}
 	for {
@@ -254,8 +268,8 @@ func (s *RemoteRuleSet) updateOnce() {
 	err := s.fetch(s.ctx, nil)
 	if err != nil {
 		s.logger.Error("fetch rule-set ", s.options.Tag, ": ", err)
-	} else if s.refs.Load() == 0 {
-		s.rules = nil
+	} else {
+		s.Cleanup()
 	}
 }
 
@@ -349,7 +363,10 @@ func (s *RemoteRuleSet) fetch(ctx context.Context, startContext *adapter.HTTPSta
 }
 
 func (s *RemoteRuleSet) Close() error {
+	s.access.Lock()
+	s.closed = true
 	s.rules = nil
+	s.access.Unlock()
 	s.cancel()
 	if s.updateTicker != nil {
 		s.updateTicker.Stop()
@@ -367,7 +384,7 @@ func (s *RemoteRuleSet) matchStates(metadata *adapter.InboundContext) ruleMatchS
 
 func (s *RemoteRuleSet) matchStatesWithBase(metadata *adapter.InboundContext, base ruleMatchState) ruleMatchStateSet {
 	var stateSet ruleMatchStateSet
-	for _, rule := range s.rules {
+	for _, rule := range s.rulesSnapshot() {
 		nestedMetadata := *metadata
 		nestedMetadata.ResetRuleMatchCache()
 		stateSet = stateSet.merge(matchHeadlessRuleStatesWithBase(rule, &nestedMetadata, base))
