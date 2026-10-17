@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -120,4 +121,105 @@ func TestRemoteRuleSetStartContextBoundsInitialFetch(t *testing.T) {
 	require.NoError(t, ruleSet.StartContext(context.Background(), startContext))
 	require.Less(t, time.Since(start), 5*time.Second)
 	require.True(t, ruleSet.lastUpdated.IsZero())
+}
+
+func runRemoteRuleSetTask(t *testing.T, task func()) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		task()
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("remote rule-set operation deadlocked")
+	}
+}
+
+func TestRemoteRuleSetConcurrentReload(t *testing.T) {
+	t.Parallel()
+	s := newTestRemoteRuleSet(context.Background(), "")
+	content := []byte(testRuleSetSource)
+	require.NoError(t, s.loadBytes(content))
+	start := make(chan struct{})
+	var workers sync.WaitGroup
+	for _, task := range []func(){
+		func() {
+			for range 500 {
+				if err := s.loadBytes(content); err != nil {
+					t.Error(err)
+					return
+				}
+			}
+		},
+		func() {
+			for range 500 {
+				metadata := testMetadata("example.com")
+				s.Match(&metadata)
+				_ = s.String()
+				s.Metadata()
+				s.ExtractIPSet()
+			}
+		},
+		func() {
+			for range 500 {
+				s.Cleanup()
+			}
+		},
+	} {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			<-start
+			task()
+		}()
+	}
+	close(start)
+	runRemoteRuleSetTask(t, workers.Wait)
+	s.IncRef()
+	require.NoError(t, s.loadBytes(content))
+	s.Cleanup()
+	metadata := testMetadata("example.com")
+	require.True(t, s.Match(&metadata))
+	s.DecRef()
+	s.Cleanup()
+	require.Empty(t, s.String())
+}
+
+func TestRemoteRuleSetConcurrentClose(t *testing.T) {
+	t.Parallel()
+	s := newTestRemoteRuleSet(context.Background(), "")
+	require.NoError(t, s.loadBytes([]byte(testRuleSetSource)))
+	start := make(chan struct{})
+	var workers sync.WaitGroup
+	workers.Add(2)
+	go func() {
+		defer workers.Done()
+		<-start
+		for range 500 {
+			metadata := testMetadata("example.com")
+			s.Match(&metadata)
+			_ = s.String()
+		}
+	}()
+	go func() {
+		defer workers.Done()
+		<-start
+		require.NoError(t, s.Close())
+	}()
+	close(start)
+	runRemoteRuleSetTask(t, workers.Wait)
+}
+
+func TestRemoteRuleSetLoadAfterCloseKeepsRulesCleared(t *testing.T) {
+	t.Parallel()
+	s := newTestRemoteRuleSet(context.Background(), "")
+	content := []byte(testRuleSetSource)
+	require.NoError(t, s.loadBytes(content))
+	require.NoError(t, s.Close())
+	require.NoError(t, s.loadBytes(content))
+	metadata := testMetadata("example.com")
+	require.False(t, s.Match(&metadata))
+	require.Empty(t, s.String())
 }
