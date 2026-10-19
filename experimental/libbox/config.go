@@ -26,6 +26,10 @@ import (
 	"github.com/sagernet/sing/service/filemanager"
 )
 
+func BaseContext(platformInterface PlatformInterface) context.Context {
+	return baseContext(platformInterface)
+}
+
 func baseContext(platformInterface PlatformInterface) context.Context {
 	dnsRegistry := include.DNSTransportRegistry()
 	if platformInterface != nil {

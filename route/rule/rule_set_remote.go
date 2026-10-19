@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"errors"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -32,6 +33,13 @@ import (
 
 var _ adapter.RuleSet = (*RemoteRuleSet)(nil)
 
+var (
+	initialFetchTimeout = C.StartTimeout
+	fetchStallTimeout   = C.TCPTimeout
+)
+
+var errFetchStalled = E.New("rule-set download stalled")
+
 type RemoteRuleSet struct {
 	ctx            context.Context
 	cancel         context.CancelFunc
@@ -53,6 +61,7 @@ type RemoteRuleSet struct {
 	pauseManager   pause.Manager
 	callbacks      list.List[adapter.RuleSetUpdateCallback]
 	refs           atomic.Int32
+	closed         bool
 }
 
 func NewRemoteRuleSet(ctx context.Context, logger logger.ContextLogger, tag string, options option.RuleSet) (*RemoteRuleSet, error) {
@@ -89,7 +98,14 @@ func (s *RemoteRuleSet) Name() string {
 }
 
 func (s *RemoteRuleSet) String() string {
-	return strings.Join(F.MapToString(s.rules), " ")
+	return strings.Join(F.MapToString(s.rulesSnapshot()), " ")
+}
+
+// rulesSnapshot remains valid across reloads because published rules are immutable.
+func (s *RemoteRuleSet) rulesSnapshot() []adapter.HeadlessRule {
+	s.access.RLock()
+	defer s.access.RUnlock()
+	return s.rules
 }
 
 func (s *RemoteRuleSet) StartContext(ctx context.Context, startContext *adapter.HTTPStartContext) error {
@@ -130,9 +146,15 @@ func (s *RemoteRuleSet) StartContext(ctx context.Context, startContext *adapter.
 		}
 	}
 	if s.lastUpdated.IsZero() && !loadedFromInitialPath {
-		err = s.fetch(ctx, true)
+		fetchCtx, cancel := context.WithTimeout(ctx, initialFetchTimeout)
+		err = s.fetch(fetchCtx, true)
+		cancel()
 		if err != nil {
-			return E.Cause(err, "initial rule-set: ", s.tag)
+			// Non-fatal: on Android the network interface may not be available
+			// during VPN initialization. Start without rule-sets; the
+			// RuleSetUpdater fetches immediately once started because
+			// lastUpdated is still zero.
+			s.logger.Warn("initial rule-set fetch failed, will retry after start: ", s.tag, ": ", err)
 		}
 	}
 	return nil
@@ -161,6 +183,8 @@ func (s *RemoteRuleSet) DecRef() {
 }
 
 func (s *RemoteRuleSet) Cleanup() {
+	s.access.Lock()
+	defer s.access.Unlock()
 	if s.refs.Load() == 0 {
 		s.rules = nil
 	}
@@ -214,6 +238,10 @@ func (s *RemoteRuleSet) loadBytes(content []byte) error {
 		return err
 	}
 	s.access.Lock()
+	if s.closed {
+		s.access.Unlock()
+		return nil
+	}
 	s.metadata = metadata
 	s.rules = rules
 	callbacks := s.callbacks.Array()
@@ -228,8 +256,8 @@ func (s *RemoteRuleSet) updateOnce() {
 	err := s.fetch(s.ctx, false)
 	if err != nil {
 		s.logger.Error("fetch rule-set ", s.tag, ": ", err)
-	} else if s.refs.Load() == 0 {
-		s.rules = nil
+	} else {
+		s.Cleanup()
 	}
 }
 
@@ -245,8 +273,18 @@ func (s *RemoteRuleSet) fetch(ctx context.Context, isStart bool) error {
 	if !isStart {
 		defer s.httpClient.CloseIdleConnections()
 	}
+	// The rule-set transport comes from the shared HTTP client manager, so
+	// bound the wait for response headers and for body progress here: a
+	// connection that stalls after the handshake must not block forever.
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	stallTimer := time.AfterFunc(fetchStallTimeout, func() { cancel(errFetchStalled) })
+	defer stallTimer.Stop()
 	response, err := s.httpClient.Do(request.WithContext(ctx))
 	if err != nil {
+		if errors.Is(context.Cause(ctx), errFetchStalled) {
+			return errFetchStalled
+		}
 		return err
 	}
 	defer response.Body.Close()
@@ -271,8 +309,13 @@ func (s *RemoteRuleSet) fetch(ctx context.Context, isStart bool) error {
 	default:
 		return E.New("unexpected status: ", response.Status)
 	}
-	content, err := io.ReadAll(response.Body)
+	stallTimer.Reset(fetchStallTimeout)
+	content, err := io.ReadAll(&stallReader{reader: response.Body, timer: stallTimer, timeout: fetchStallTimeout})
+	stallTimer.Stop()
 	if err != nil {
+		if errors.Is(context.Cause(ctx), errFetchStalled) {
+			return errFetchStalled
+		}
 		return err
 	}
 	err = s.loadBytes(content)
@@ -324,15 +367,32 @@ func (s *RemoteRuleSet) resolveTransport() (adapter.HTTPTransport, error) {
 }
 
 func (s *RemoteRuleSet) Close() error {
+	s.access.Lock()
+	s.closed = true
 	s.rules = nil
+	s.access.Unlock()
 	s.cancel()
 	return nil
 }
 
 func (s *RemoteRuleSet) Match(metadata *adapter.InboundContext) bool {
-	return matchAnyHeadlessRule(s.rules, metadata)
+	return matchAnyHeadlessRule(s.rulesSnapshot(), metadata)
 }
 
 func (s *RemoteRuleSet) mergeableRule() *DefaultHeadlessRule {
-	return mergeableRuleIn(s.rules)
+	return mergeableRuleIn(s.rulesSnapshot())
+}
+
+type stallReader struct {
+	reader  io.Reader
+	timer   *time.Timer
+	timeout time.Duration
+}
+
+func (r *stallReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	if n > 0 {
+		r.timer.Reset(r.timeout)
+	}
+	return n, err
 }

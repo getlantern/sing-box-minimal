@@ -78,3 +78,9 @@ func (m *Registry) register(outboundType string, optionsConstructor optionsConst
 	m.optionsType[outboundType] = optionsConstructor
 	m.constructor[outboundType] = constructor
 }
+
+func (m *Registry) Registered() []string {
+	m.access.Lock()
+	defer m.access.Unlock()
+	return slices.Collect(maps.Keys(m.constructor))
+}

@@ -139,6 +139,7 @@ func (e *Endpoint) Start(postStart bool) error {
 	if postStart != hasDomainPeer {
 		return nil
 	}
+
 	var bind conn.Bind
 	udpListener, isUDPListener := common.Cast[dialer.UDPListener](e.options.Dialer)
 	if isUDPListener {
@@ -201,6 +202,13 @@ func (e *Endpoint) Start(postStart bool) error {
 		},
 	}
 	wgDevice := device.NewDevice(e.options.Context, e.returnDevice, bind, logger, e.options.Workers)
+
+	if e.options.ListenPort != 0 { // Start UAPI listener only when running as server
+		if err := startUAPIListener(e.options.Context, e.options.Name, wgDevice, e.options.Logger); err != nil {
+			return E.Cause(err, "start UAPI listener")
+		}
+	}
+
 	e.tunDevice.SetDevice(wgDevice)
 	domainPeers := make(map[device.NoisePublicKey]*peerConfig)
 	for peerIndex, peer := range e.peers {

@@ -4,6 +4,8 @@ import (
 	"context"
 	"os"
 	"runtime"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -16,6 +18,7 @@ import (
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/task"
+	"github.com/sagernet/sing/common/x/list"
 	"github.com/sagernet/sing/contrab/freelru"
 	"github.com/sagernet/sing/contrab/maphash"
 	"github.com/sagernet/sing/service"
@@ -41,13 +44,20 @@ type Router struct {
 	ruleSets          []adapter.RuleSet
 	ruleSetMap        map[string]adapter.RuleSet
 	ruleSetUpdater    *R.RuleSetUpdater
-	processSearcher   process.Searcher
-	processCache      *freelru.Cache[processCacheKey, processCacheEntry]
-	neighborResolver  adapter.NeighborResolver
-	pauseManager      pause.Manager
-	trackers          []adapter.ConnectionTracker
-	platformInterface adapter.PlatformInterface
-	started           bool
+	// processNeeded tracks whether any rule or rule-set needs process
+	// lookups. Rule-sets can gain process rules on a live update, so the
+	// searcher is built lazily by processInfoSearcher instead of once at start.
+	processNeededMutex  sync.Mutex
+	processNeeded       atomic.Bool
+	processSearcherOnce sync.Once
+	processSearcher     process.Searcher
+	processCache        *freelru.Cache[processCacheKey, processCacheEntry]
+	ruleSetCallbacks    []*list.Element[adapter.RuleSetUpdateCallback]
+	neighborResolver    adapter.NeighborResolver
+	pauseManager        pause.Manager
+	trackers            []adapter.ConnectionTracker
+	platformInterface   adapter.PlatformInterface
+	started             bool
 }
 
 func NewRouter(ctx context.Context, logFactory log.Factory, options option.RouteOptions, dnsOptions option.DNSOptions) *Router {
@@ -161,40 +171,16 @@ func (r *Router) Start(stage adapter.StartStage) error {
 		}
 		r.ruleSetUpdater = R.NewRuleSetUpdater(r.ctx, r.ruleSets)
 		r.network.Initialize(r.ruleSets)
-		needFindProcess := r.needFindProcess
 		for _, ruleSet := range r.ruleSets {
-			metadata := ruleSet.Metadata()
-			if metadata.ContainsProcessRule {
-				needFindProcess = true
-			}
+			r.ruleSetCallbacks = append(r.ruleSetCallbacks, ruleSet.RegisterCallback(func(adapter.RuleSet) {
+				r.updateProcessNeeded()
+			}))
 		}
-		if C.IsAndroid && r.platformInterface != nil {
-			needFindProcess = true
-		}
-		r.needFindProcess = needFindProcess
-		if needFindProcess {
-			if r.platformInterface != nil && r.platformInterface.UsePlatformConnectionOwnerFinder() {
-				r.processSearcher = newPlatformSearcher(r.platformInterface)
-			} else {
-				monitor.Start("initialize process searcher")
-				searcher, err := process.NewSearcher(process.Config{
-					Logger:         r.logger,
-					PackageManager: r.network.PackageManager(),
-				})
-				monitor.Finish()
-				if err != nil {
-					if err != os.ErrInvalid {
-						r.logger.Warn(E.Cause(err, "create process searcher"))
-					}
-				} else {
-					r.processSearcher = searcher
-				}
-			}
-		}
-		if r.processSearcher != nil {
-			processCache := common.Must1(freelru.New[processCacheKey, processCacheEntry](256, maphash.NewHasher[processCacheKey]().Hash32, true))
-			processCache.SetLifetime(200 * time.Millisecond)
-			r.processCache = processCache
+		r.updateProcessNeeded()
+		if r.processNeeded.Load() {
+			monitor.Start("initialize process searcher")
+			r.processInfoSearcher()
+			monitor.Finish()
 		}
 	case adapter.StartStatePostStart:
 		for i, rule := range r.rules {
@@ -244,20 +230,78 @@ func (r *Router) Close() error {
 		monitor.Finish()
 	}
 	for i, ruleSet := range r.ruleSets {
+		if i < len(r.ruleSetCallbacks) {
+			ruleSet.UnregisterCallback(r.ruleSetCallbacks[i])
+		}
 		monitor.Start("close rule-set[", i, "]")
 		err = E.Append(err, ruleSet.Close(), func(err error) error {
 			return E.Cause(err, "close rule-set[", i, "]")
 		})
 		monitor.Finish()
 	}
-	if r.processSearcher != nil {
+	r.processNeededMutex.Lock()
+	processSearcher := r.processSearcher
+	r.processNeededMutex.Unlock()
+	if processSearcher != nil {
 		monitor.Start("close process searcher")
-		err = E.Append(err, r.processSearcher.Close(), func(err error) error {
+		err = E.Append(err, processSearcher.Close(), func(err error) error {
 			return E.Cause(err, "close process searcher")
 		})
 		monitor.Finish()
 	}
 	return err
+}
+
+func (r *Router) updateProcessNeeded() {
+	r.processNeededMutex.Lock()
+	defer r.processNeededMutex.Unlock()
+	need := r.needFindProcess
+	if !need {
+		for _, ruleSet := range r.ruleSets {
+			if ruleSet.Metadata().ContainsProcessRule {
+				need = true
+				break
+			}
+		}
+	}
+	if C.IsAndroid && r.platformInterface != nil {
+		need = true
+	}
+	r.processNeeded.Store(need)
+}
+
+// processInfoSearcher returns the process searcher, building it on first use
+// once a rule needs it. Rule-set update callbacks only flip processNeeded, so
+// construction never runs on a rule-set update goroutine.
+func (r *Router) processInfoSearcher() process.Searcher {
+	if !r.processNeeded.Load() {
+		return nil
+	}
+	r.processSearcherOnce.Do(func() {
+		var searcher process.Searcher
+		if r.platformInterface != nil && r.platformInterface.UsePlatformConnectionOwnerFinder() {
+			searcher = newPlatformSearcher(r.platformInterface)
+		} else {
+			s, err := process.NewSearcher(process.Config{
+				Logger:         r.logger,
+				PackageManager: r.network.PackageManager(),
+			})
+			if err != nil {
+				if err != os.ErrInvalid {
+					r.logger.Warn(E.Cause(err, "create process searcher"))
+				}
+				return
+			}
+			searcher = s
+		}
+		processCache := common.Must1(freelru.New[processCacheKey, processCacheEntry](256, maphash.NewHasher[processCacheKey]().Hash32, true))
+		processCache.SetLifetime(200 * time.Millisecond)
+		r.processNeededMutex.Lock()
+		r.processSearcher = searcher
+		r.processCache = processCache
+		r.processNeededMutex.Unlock()
+	})
+	return r.processSearcher
 }
 
 func (r *Router) RuleSet(tag string) (adapter.RuleSet, bool) {
@@ -274,7 +318,7 @@ func (r *Router) AppendTracker(tracker adapter.ConnectionTracker) {
 }
 
 func (r *Router) NeedFindProcess() bool {
-	return r.needFindProcess
+	return r.processNeeded.Load()
 }
 
 func (r *Router) NeedFindNeighbor() bool {
@@ -288,10 +332,14 @@ func (r *Router) NeighborResolver() adapter.NeighborResolver {
 func (r *Router) ResetNetwork() {
 	r.httpClientManager.ResetNetwork()
 	r.dns.ResetNetwork()
-	if r.processCache != nil {
-		r.processCache.Purge()
+	r.processNeededMutex.Lock()
+	processCache := r.processCache
+	processSearcher := r.processSearcher
+	r.processNeededMutex.Unlock()
+	if processCache != nil {
+		processCache.Purge()
 	}
-	if r.processSearcher != nil {
-		r.processSearcher.ResetCache()
+	if processSearcher != nil {
+		processSearcher.ResetCache()
 	}
 }

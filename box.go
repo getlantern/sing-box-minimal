@@ -175,18 +175,21 @@ func New(options Options) (*Box, error) {
 	if platformInterface != nil {
 		defaultLogWriter = io.Discard
 	}
-	logFactory, err := log.New(log.Options{
-		Context:        ctx,
-		Options:        common.PtrValueOrDefault(options.Log),
-		Observable:     needClashAPI && experimentalOptions.ClashAPI.ExternalController != "",
-		DefaultWriter:  defaultLogWriter,
-		BaseTime:       createdAt,
-		PlatformWriter: options.PlatformLogWriter,
-	})
-	if err != nil {
-		return nil, E.Cause(err, "create log factory")
+	logFactory := service.FromContext[log.Factory](ctx)
+	if logFactory == nil {
+		logFactory, err = log.New(log.Options{
+			Context:        ctx,
+			Options:        common.PtrValueOrDefault(options.Log),
+			Observable:     needClashAPI && experimentalOptions.ClashAPI.ExternalController != "",
+			DefaultWriter:  defaultLogWriter,
+			BaseTime:       createdAt,
+			PlatformWriter: options.PlatformLogWriter,
+		})
+		if err != nil {
+			return nil, E.Cause(err, "create log factory")
+		}
+		service.MustRegister[log.Factory](ctx, logFactory)
 	}
-	service.MustRegister[log.Factory](ctx, logFactory)
 
 	var internalServices []adapter.LifecycleService
 	routeOptions := common.PtrValueOrDefault(options.Route)
@@ -422,7 +425,7 @@ func New(options Options) (*Box, error) {
 			return nil, E.Cause(err, "initialize platform interface")
 		}
 	}
-	if needCacheFile {
+	if cf := service.FromContext[adapter.CacheFile](ctx); cf == nil && needCacheFile {
 		cacheFile := cachefile.New(ctx, logFactory.NewLogger("cache-file"), common.PtrValueOrDefault(experimentalOptions.CacheFile))
 		service.MustRegister[adapter.CacheFile](ctx, cacheFile)
 		internalServices = append(internalServices, cacheFile)

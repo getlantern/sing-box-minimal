@@ -39,6 +39,7 @@ type FlowOutbound interface {
 
 type OutboundRegistry interface {
 	option.OutboundOptionsRegistry
+	Registry
 	CreateOutbound(ctx context.Context, router Router, logger log.ContextLogger, tag string, outboundType string, options any) (Outbound, error)
 }
 

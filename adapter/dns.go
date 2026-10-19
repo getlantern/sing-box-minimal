@@ -80,6 +80,7 @@ type DNSTransportWithEnvironment interface {
 
 type DNSTransportRegistry interface {
 	option.DNSTransportOptionsRegistry
+	Registry
 	CreateDNSTransport(ctx context.Context, logger log.ContextLogger, tag string, transportType string, options any) (DNSTransport, error)
 }
 

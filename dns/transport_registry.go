@@ -78,3 +78,9 @@ func (r *TransportRegistry) register(transportType string, optionsConstructor op
 	r.optionsType[transportType] = optionsConstructor
 	r.constructors[transportType] = constructor
 }
+
+func (r *TransportRegistry) Registered() []string {
+	r.access.Lock()
+	defer r.access.Unlock()
+	return slices.Collect(maps.Keys(r.constructors))
+}
