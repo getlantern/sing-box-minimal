@@ -23,6 +23,7 @@ func (f *mockInterfaceFinder) ByName(name string) (*control.Interface, error) { 
 func (f *mockInterfaceFinder) ByIndex(index int) (*control.Interface, error) {
 	return f.byIndexFunc(index)
 }
+
 func (f *mockInterfaceFinder) ByAddr(addr netip.Addr) (*control.Interface, error) { return nil, nil }
 
 // mockNetworkManager implements adapter.NetworkManager for testing.
@@ -36,6 +37,7 @@ type mockNetworkManager struct {
 func (m *mockNetworkManager) InterfaceFinder() control.InterfaceFinder {
 	return m.finder
 }
+
 func (m *mockNetworkManager) UpdateInterfaces() error {
 	m.updateCallCount++
 	return m.updateErr

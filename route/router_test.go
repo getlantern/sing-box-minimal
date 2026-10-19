@@ -4,10 +4,10 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/log"
+
+	"github.com/stretchr/testify/require"
 )
 
 type stubPlatformInterface struct {
@@ -27,18 +27,14 @@ func TestProcessSearcherLazyInitCloseRace(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for range 8 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			r.updateProcessNeeded()
 			r.processInfoSearcher()
-		}()
+		})
 	}
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		_ = r.Close()
-	}()
+	})
 	wg.Wait()
 
 	require.NotNil(t, r.processInfoSearcher(), "expected a searcher to be initialized after lazy init")

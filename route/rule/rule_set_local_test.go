@@ -63,12 +63,10 @@ func TestLocalRuleSetConcurrentReload(t *testing.T) {
 			}
 		},
 	} {
-		workers.Add(1)
-		go func() {
-			defer workers.Done()
+		workers.Go(func() {
 			<-start
 			task()
-		}()
+		})
 	}
 	close(start)
 	runLocalRuleSetTask(t, workers.Wait)

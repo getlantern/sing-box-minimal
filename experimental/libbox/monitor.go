@@ -1,9 +1,9 @@
 package libbox
 
 import (
-	"github.com/sagernet/sing-box/service/powerreport"
 	"net"
 
+	"github.com/sagernet/sing-box/service/powerreport"
 	tun "github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common/control"
 	E "github.com/sagernet/sing/common/exceptions"
