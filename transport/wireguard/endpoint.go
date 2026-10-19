@@ -38,6 +38,7 @@ type Endpoint struct {
 	egressPool     *tun.UDPEgressPool
 	pause          pause.Manager
 	pauseCallback  *list.Element[pause.Callback]
+	uapiListener   net.Listener
 }
 
 func NewEndpoint(options EndpointOptions) (*Endpoint, error) {
@@ -202,13 +203,6 @@ func (e *Endpoint) Start(postStart bool) error {
 		},
 	}
 	wgDevice := device.NewDevice(e.options.Context, e.returnDevice, bind, logger, e.options.Workers)
-
-	if e.options.ListenPort != 0 { // Start UAPI listener only when running as server
-		if err := startUAPIListener(e.options.Context, e.options.Name, wgDevice, e.options.Logger); err != nil {
-			return E.Cause(err, "start UAPI listener")
-		}
-	}
-
 	e.tunDevice.SetDevice(wgDevice)
 	domainPeers := make(map[device.NoisePublicKey]*peerConfig)
 	for peerIndex, peer := range e.peers {
@@ -258,6 +252,14 @@ func (e *Endpoint) Start(postStart bool) error {
 		wgDevice.Close()
 		return E.Cause(err, "setup wireguard: \n", ipcConf.String())
 	}
+	if e.options.ListenPort != 0 { // Start UAPI listener only when running as server
+		uapiListener, uapiErr := startUAPIListener(e.options.Context, e.options.Name, wgDevice, e.options.Logger)
+		if uapiErr != nil {
+			wgDevice.Close()
+			return E.Cause(uapiErr, "start UAPI listener")
+		}
+		e.uapiListener = uapiListener
+	}
 	e.device = wgDevice
 	e.pause = service.FromContext[pause.Manager](e.options.Context)
 	if e.pause != nil {
@@ -289,6 +291,10 @@ func (e *Endpoint) Close() error {
 	if e.egressPool != nil {
 		e.egressPool.Close()
 		e.egressPool = nil
+	}
+	if e.uapiListener != nil {
+		e.uapiListener.Close()
+		e.uapiListener = nil
 	}
 	if e.device != nil {
 		e.device.Down()

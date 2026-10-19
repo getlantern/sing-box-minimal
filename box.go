@@ -431,7 +431,12 @@ func New(options Options) (*Box, error) {
 		internalServices = append(internalServices, cacheFile)
 	}
 	if needClashAPI {
-		clashServer, err := experimental.NewClashServer(ctx, logFactory.(log.ObservableFactory), common.PtrValueOrDefault(experimentalOptions.ClashAPI))
+		// The log factory may come from the context, so it is not necessarily observable.
+		observableFactory, isObservable := logFactory.(log.ObservableFactory)
+		if !isObservable {
+			return nil, E.New("clash-server requires an observable log factory")
+		}
+		clashServer, err := experimental.NewClashServer(ctx, observableFactory, common.PtrValueOrDefault(experimentalOptions.ClashAPI))
 		if err != nil {
 			return nil, E.Cause(err, "create clash-server")
 		}

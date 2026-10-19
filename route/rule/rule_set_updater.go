@@ -8,6 +8,15 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 )
 
+// A rule-set that has never loaded retries on a backoff from
+// ruleSetRetryMin up to ruleSetRetryMax, rather than waiting a full update
+// interval: its initial fetch may have failed only because the network was
+// not up yet.
+var (
+	ruleSetRetryMin = 30 * time.Second
+	ruleSetRetryMax = 10 * time.Minute
+)
+
 type RuleSetUpdater struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
@@ -44,6 +53,7 @@ func (u *RuleSetUpdater) Close() error {
 
 func (u *RuleSetUpdater) loopUpdate() {
 	nextUpdates := make([]time.Time, len(u.ruleSets))
+	retryDelays := make([]time.Duration, len(u.ruleSets))
 	for i, ruleSet := range u.ruleSets {
 		nextUpdates[i] = ruleSet.lastUpdated.Add(ruleSet.updateInterval)
 	}
@@ -62,7 +72,13 @@ func (u *RuleSetUpdater) loopUpdate() {
 				continue
 			}
 			ruleSet.updateOnce()
-			nextUpdates[i] = now.Add(ruleSet.updateInterval)
+			if ruleSet.lastUpdated.IsZero() {
+				retryDelays[i] = nextRetryDelay(retryDelays[i], ruleSet.updateInterval)
+				nextUpdates[i] = now.Add(retryDelays[i])
+			} else {
+				retryDelays[i] = 0
+				nextUpdates[i] = now.Add(ruleSet.updateInterval)
+			}
 			updated = true
 		}
 		if updated {
@@ -70,6 +86,14 @@ func (u *RuleSetUpdater) loopUpdate() {
 		}
 		timer.Reset(waitUntilNext(nextUpdates))
 	}
+}
+
+func nextRetryDelay(previous time.Duration, updateInterval time.Duration) time.Duration {
+	delay := ruleSetRetryMin
+	if previous > 0 {
+		delay = previous * 2
+	}
+	return min(delay, ruleSetRetryMax, updateInterval)
 }
 
 func waitUntilNext(nextUpdates []time.Time) time.Duration {

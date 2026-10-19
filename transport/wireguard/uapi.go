@@ -11,10 +11,12 @@ import (
 	"github.com/sagernet/wireguard-go/device"
 )
 
-func startUAPIListener(ctx context.Context, name string, wgDevice *device.Device, logger logger.ContextLogger) error {
+// startUAPIListener serves the UAPI socket for wgDevice until the returned
+// listener is closed or ctx is done.
+func startUAPIListener(ctx context.Context, name string, wgDevice *device.Device, logger logger.ContextLogger) (net.Listener, error) {
 	uapi, err := uapiListen(name)
 	if err != nil {
-		return fmt.Errorf("listen UAPI socket: %v", err)
+		return nil, fmt.Errorf("listen UAPI socket: %v", err)
 	}
 
 	go func() {
@@ -34,5 +36,5 @@ func startUAPIListener(ctx context.Context, name string, wgDevice *device.Device
 			go wgDevice.IpcHandle(conn)
 		}
 	}()
-	return nil
+	return uapi, nil
 }

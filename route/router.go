@@ -51,6 +51,7 @@ type Router struct {
 	processNeeded       atomic.Bool
 	processSearcherOnce sync.Once
 	processSearcher     process.Searcher
+	processClosed       bool
 	processCache        *freelru.Cache[processCacheKey, processCacheEntry]
 	ruleSetCallbacks    []*list.Element[adapter.RuleSetUpdateCallback]
 	neighborResolver    adapter.NeighborResolver
@@ -240,6 +241,7 @@ func (r *Router) Close() error {
 		monitor.Finish()
 	}
 	r.processNeededMutex.Lock()
+	r.processClosed = true
 	processSearcher := r.processSearcher
 	r.processNeededMutex.Unlock()
 	if processSearcher != nil {
@@ -297,6 +299,14 @@ func (r *Router) processInfoSearcher() process.Searcher {
 		processCache := common.Must1(freelru.New[processCacheKey, processCacheEntry](256, maphash.NewHasher[processCacheKey]().Hash32, true))
 		processCache.SetLifetime(200 * time.Millisecond)
 		r.processNeededMutex.Lock()
+		if r.processClosed {
+			r.processNeededMutex.Unlock()
+			// Close already ran, so nothing else will close this searcher.
+			if err := searcher.Close(); err != nil {
+				r.logger.Warn(E.Cause(err, "close process searcher"))
+			}
+			return
+		}
 		r.processSearcher = searcher
 		r.processCache = processCache
 		r.processNeededMutex.Unlock()
