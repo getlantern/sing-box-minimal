@@ -56,7 +56,7 @@ func NewRouterWithOptions(router adapter.ConnectionRouterEx, logger logger.Conte
 func (r *Router) RouteConnection(ctx context.Context, conn net.Conn, metadata adapter.InboundContext) error {
 	if metadata.Destination == mux.Destination {
 		// TODO: check if WithContext is necessary
-		return r.service.NewConnection(adapter.WithContext(ctx, &metadata), conn, adapter.UpstreamMetadata(metadata))
+		return r.service.NewConnection(ContextWithSessionConn(adapter.WithContext(ctx, &metadata), conn), conn, adapter.UpstreamMetadata(metadata))
 	} else {
 		return r.router.RouteConnection(ctx, conn, metadata)
 	}
@@ -69,7 +69,7 @@ func (r *Router) RoutePacketConnection(ctx context.Context, conn N.PacketConn, m
 
 func (r *Router) RouteConnectionEx(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
 	if metadata.Destination == mux.Destination {
-		r.service.NewConnectionEx(adapter.WithContext(ctx, &metadata), conn, metadata.Source, metadata.Destination, onClose)
+		r.service.NewConnectionEx(ContextWithSessionConn(adapter.WithContext(ctx, &metadata), conn), conn, metadata.Source, metadata.Destination, onClose)
 		return
 	}
 	r.router.RouteConnectionEx(ctx, conn, metadata, onClose)
