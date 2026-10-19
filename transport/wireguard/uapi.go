@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sync"
 
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
@@ -14,14 +15,18 @@ import (
 // startUAPIListener serves the UAPI socket for wgDevice until the returned
 // listener is closed or ctx is done.
 func startUAPIListener(ctx context.Context, name string, wgDevice *device.Device, logger logger.ContextLogger) (net.Listener, error) {
-	uapi, err := uapiListen(name)
+	listener, err := uapiListen(name)
 	if err != nil {
 		return nil, fmt.Errorf("listen UAPI socket: %v", err)
 	}
+	uapi := &onceCloseListener{Listener: listener, closed: make(chan struct{})}
 
 	go func() {
-		<-ctx.Done()
-		uapi.Close()
+		select {
+		case <-ctx.Done():
+			uapi.Close()
+		case <-uapi.closed:
+		}
 	}()
 	go func() {
 		for {
@@ -37,4 +42,22 @@ func startUAPIListener(ctx context.Context, name string, wgDevice *device.Device
 		}
 	}()
 	return uapi, nil
+}
+
+// onceCloseListener makes Close idempotent. wireguard-go's UAPI listener
+// closes its inotify/kqueue descriptors by number on every Close, so a second
+// Close could close an unrelated file that reused them.
+type onceCloseListener struct {
+	net.Listener
+	once   sync.Once
+	closed chan struct{}
+	err    error
+}
+
+func (l *onceCloseListener) Close() error {
+	l.once.Do(func() {
+		l.err = l.Listener.Close()
+		close(l.closed)
+	})
+	return l.err
 }
