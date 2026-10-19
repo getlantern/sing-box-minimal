@@ -7,6 +7,7 @@ import (
 )
 
 func TestSessionConnFromContext(t *testing.T) {
+	t.Parallel()
 	if _, ok := SessionConnFromContext(context.Background()); ok {
 		t.Fatal("found a session conn in a context without one")
 	}
