@@ -104,6 +104,28 @@ func TestGroupRetireClosesLateTracks(t *testing.T) {
 	}
 }
 
+func TestGroupTryNewConn(t *testing.T) {
+	g := NewGroup()
+	local, peer := net.Pipe()
+	defer peer.Close()
+	wrapped, ok := g.TryNewConn(local, true)
+	if !ok || wrapped == nil || g.Len() != 1 {
+		t.Fatal("TryNewConn must wrap on a live group")
+	}
+	g.Retire()
+	late, latePeer := net.Pipe()
+	defer latePeer.Close()
+	defer late.Close()
+	if c, ok := g.TryNewConn(late, true); ok || c != nil {
+		t.Fatal("TryNewConn must refuse on a retired group")
+	}
+	go late.Write([]byte("x"))
+	_ = latePeer.SetReadDeadline(time.Now().Add(time.Second))
+	if _, err := latePeer.Read(make([]byte, 1)); err != nil {
+		t.Fatal("a refused conn must be left open for the caller to close")
+	}
+}
+
 func TestContextWithGroupIgnoresNil(t *testing.T) {
 	if len(GroupsFromContext(ContextWithGroup(context.Background(), nil))) != 0 {
 		t.Fatal("nil group must not be added")

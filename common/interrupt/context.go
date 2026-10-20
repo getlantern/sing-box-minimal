@@ -41,7 +41,8 @@ func groupsFromContext(ctx context.Context) []*Group {
 }
 
 // AnyRetired reports whether any group carried by ctx has been retired, so a
-// flow can fail its handshake instead of connecting and being reset.
+// flow can fail its handshake instead of connecting and being reset. A Retire
+// landing between this check and tracking still resets the flow.
 func AnyRetired(ctx context.Context) bool {
 	return slices.ContainsFunc(groupsFromContext(ctx), (*Group).Retired)
 }

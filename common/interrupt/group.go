@@ -45,6 +45,30 @@ func (g *Group) NewPacketConn(conn net.PacketConn, isExternal bool) net.PacketCo
 	return &PacketConn{PacketConn: conn, group: g, element: item}
 }
 
+// TryNewConn wraps conn like NewConn, or reports false without wrapping or
+// closing it if the group is retired, in one step so a caller can fail its
+// dial instead of returning a conn that is about to close.
+func (g *Group) TryNewConn(conn net.Conn, isExternal bool) (net.Conn, bool) {
+	g.access.Lock()
+	defer g.access.Unlock()
+	if g.retired {
+		return nil, false
+	}
+	item := g.connections.PushBack(&groupConnItem{conn, isExternal})
+	return &Conn{Conn: conn, group: g, element: item}, true
+}
+
+// TryNewPacketConn is TryNewConn for packet conns.
+func (g *Group) TryNewPacketConn(conn net.PacketConn, isExternal bool) (net.PacketConn, bool) {
+	g.access.Lock()
+	defer g.access.Unlock()
+	if g.retired {
+		return nil, false
+	}
+	item := g.connections.PushBack(&groupConnItem{conn, isExternal})
+	return &PacketConn{PacketConn: conn, group: g, element: item}, true
+}
+
 // Track registers closer without wrapping it, for conns whose wrapper would hide
 // interfaces callers need. untrack is safe to call more than once.
 // On a retired group, closer is closed at once, off the caller's goroutine.
@@ -91,7 +115,9 @@ func (g *Group) Interrupt(interruptExternalConnections bool) {
 // outlives the switch are still closed, and callers holding a lock don't block
 // on a slow Close.
 func (g *Group) Retire() {
-	go closeAll(g.take(true, true))
+	if closers := g.take(true, true); len(closers) > 0 {
+		go closeAll(closers)
+	}
 }
 
 func (g *Group) take(interruptExternalConnections bool, retire bool) []io.Closer {
