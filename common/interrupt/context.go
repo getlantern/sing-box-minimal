@@ -19,9 +19,9 @@ type contextKeyGroups struct{}
 
 // ContextWithGroup has the connection manager track this flow in g once its
 // handshake succeeds, so g.Interrupt closes routed flows too. Nested groups
-// accumulate. Interrupts during the dial itself are the caller's to catch, and
-// outbounds that copy flows themselves instead of handing them to the
-// connection manager are not tracked.
+// accumulate. Interrupt misses flows still dialing; Retire catches them when
+// they are tracked. Outbounds that copy flows themselves instead of handing
+// them to the connection manager are not tracked.
 func ContextWithGroup(ctx context.Context, g *Group) context.Context {
 	groups := groupsFromContext(ctx)
 	if g == nil || slices.Contains(groups, g) {
@@ -38,4 +38,10 @@ func GroupsFromContext(ctx context.Context) []*Group {
 func groupsFromContext(ctx context.Context) []*Group {
 	groups, _ := ctx.Value(contextKeyGroups{}).([]*Group)
 	return groups
+}
+
+// AnyRetired reports whether any group carried by ctx has been retired, so a
+// flow can fail its handshake instead of connecting and being reset.
+func AnyRetired(ctx context.Context) bool {
+	return slices.ContainsFunc(groupsFromContext(ctx), (*Group).Retired)
 }

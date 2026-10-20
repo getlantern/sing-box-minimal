@@ -2,6 +2,7 @@ package interrupt
 
 import (
 	"context"
+	"net"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -55,9 +56,52 @@ func TestGroupInterruptClosesOutsideLock(t *testing.T) {
 	}
 }
 
+func waitCloses(t *testing.T, c *countingCloser, want int32, msg string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for c.closes.Load() != want {
+		if time.Now().After(deadline) {
+			t.Fatal(msg)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 type closerFunc func() error
 
 func (f closerFunc) Close() error { return f() }
+
+func TestGroupRetireClosesLateTracks(t *testing.T) {
+	g := NewGroup()
+	early, late := &countingCloser{}, &countingCloser{}
+	g.Track(early, true)
+	g.Retire()
+	if early.closes.Load() != 1 {
+		t.Fatal("Retire must close tracked conns")
+	}
+	untrack := g.Track(late, true)
+	untrack()
+	waitCloses(t, late, 1, "tracking on a retired group must close the conn")
+	local, peer := net.Pipe()
+	defer peer.Close()
+	wrapped := g.NewConn(local, true)
+	if _, err := wrapped.Read(make([]byte, 1)); err == nil {
+		t.Fatal("NewConn on a retired group must return a closed conn")
+	}
+	if g.Len() != 0 {
+		t.Fatalf("Len = %d on a retired group, want 0", g.Len())
+	}
+
+	plain := NewGroup()
+	plain.Interrupt(true)
+	plain.Track(&countingCloser{}, true)
+	if plain.Retired() || plain.Len() != 1 {
+		t.Fatal("Interrupt must not retire the group")
+	}
+	if !g.Retired() {
+		t.Fatal("Retire must mark the group retired")
+	}
+}
 
 func TestContextWithGroupIgnoresNil(t *testing.T) {
 	if len(GroupsFromContext(ContextWithGroup(context.Background(), nil))) != 0 {

@@ -119,6 +119,13 @@ func (m *ConnectionManager) NewConnection(ctx context.Context, this N.Dialer, co
 		m.logger.ErrorContext(ctx, err)
 		return
 	}
+	if interrupt.AnyRetired(ctx) {
+		err = E.New("open connection to ", metadata.Destination, ": route retired")
+		remoteConn.Close()
+		N.CloseOnHandshakeFailure(conn, onClose, err)
+		m.logger.DebugContext(ctx, err)
+		return
+	}
 	err = N.ReportConnHandshakeSuccess(conn, remoteConn)
 	if err != nil {
 		err = E.Cause(err, "report handshake success")
@@ -207,6 +214,13 @@ func (m *ConnectionManager) NewPacketConnection(ctx context.Context, this N.Dial
 			m.logger.ErrorContext(ctx, err)
 			return
 		}
+	}
+	if interrupt.AnyRetired(ctx) {
+		err = E.New("listen packet connection: route retired")
+		remotePacketConn.Close()
+		N.CloseOnHandshakeFailure(conn, onClose, err)
+		m.logger.DebugContext(ctx, err)
+		return
 	}
 	err = N.ReportPacketConnHandshakeSuccess(conn, remotePacketConn)
 	if err != nil {

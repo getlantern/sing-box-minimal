@@ -200,6 +200,20 @@ func TestConnectionManager_NestedGroupsEachTrack(t *testing.T) {
 	client.Close()
 }
 
+func TestConnectionManager_RetiredGroupFailsLateFlowHandshake(t *testing.T) {
+	g := interrupt.NewGroup()
+	g.Retire()
+	_, _, remote, closed := newFlow(t, g)
+	select {
+	case err := <-closed:
+		require.ErrorContains(t, err, "route retired", "a late flow must fail its handshake, not connect then reset")
+	case <-time.After(5 * time.Second):
+		t.Fatal("late flow was not refused")
+	}
+	require.Positive(t, remote.closes.Load())
+	require.Zero(t, g.Len())
+}
+
 func TestConnectionManager_FinishedFlowIsUntracked(t *testing.T) {
 	g := interrupt.NewGroup()
 	client, upstream, _, closed := newFlow(t, g)

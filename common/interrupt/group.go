@@ -11,6 +11,7 @@ import (
 type Group struct {
 	access      sync.Mutex
 	connections list.List[*groupConnItem]
+	retired     bool
 }
 
 type groupConnItem struct {
@@ -25,6 +26,10 @@ func NewGroup() *Group {
 func (g *Group) NewConn(conn net.Conn, isExternal bool) net.Conn {
 	g.access.Lock()
 	defer g.access.Unlock()
+	if g.retired {
+		go conn.Close()
+		return conn
+	}
 	item := g.connections.PushBack(&groupConnItem{conn, isExternal})
 	return &Conn{Conn: conn, group: g, element: item}
 }
@@ -32,14 +37,24 @@ func (g *Group) NewConn(conn net.Conn, isExternal bool) net.Conn {
 func (g *Group) NewPacketConn(conn net.PacketConn, isExternal bool) net.PacketConn {
 	g.access.Lock()
 	defer g.access.Unlock()
+	if g.retired {
+		go conn.Close()
+		return conn
+	}
 	item := g.connections.PushBack(&groupConnItem{conn, isExternal})
 	return &PacketConn{PacketConn: conn, group: g, element: item}
 }
 
 // Track registers closer without wrapping it, for conns whose wrapper would hide
 // interfaces callers need. untrack is safe to call more than once.
+// On a retired group, closer is closed at once, off the caller's goroutine.
 func (g *Group) Track(closer io.Closer, isExternal bool) (untrack func()) {
 	g.access.Lock()
+	if g.retired {
+		g.access.Unlock()
+		go closer.Close()
+		return func() {}
+	}
 	element := g.connections.PushBack(&groupConnItem{closer, isExternal})
 	g.access.Unlock()
 	return func() {
@@ -47,6 +62,13 @@ func (g *Group) Track(closer io.Closer, isExternal bool) (untrack func()) {
 		g.connections.Remove(element)
 		g.access.Unlock()
 	}
+}
+
+// Retired reports whether Retire has run.
+func (g *Group) Retired() bool {
+	g.access.Lock()
+	defer g.access.Unlock()
+	return g.retired
 }
 
 // Len reports how many conns the group tracks.
@@ -60,7 +82,21 @@ func (g *Group) Len() int {
 // so a slow or re-entrant Close can't stall the group or the other conns. A
 // concurrent Interrupt may return before the other one's closes finish.
 func (g *Group) Interrupt(interruptExternalConnections bool) {
+	g.interrupt(interruptExternalConnections, false)
+}
+
+// Retire interrupts every conn and closes anything tracked or wrapped
+// afterwards, for a group replaced wholesale: conns whose dial or async
+// dispatch outlives the switch are still closed.
+func (g *Group) Retire() {
+	g.interrupt(true, true)
+}
+
+func (g *Group) interrupt(interruptExternalConnections bool, retire bool) {
 	g.access.Lock()
+	if retire {
+		g.retired = true
+	}
 	var toClose []io.Closer
 	for element := g.connections.Front(); element != nil; {
 		next := element.Next()
