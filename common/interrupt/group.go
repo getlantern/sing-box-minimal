@@ -36,17 +36,48 @@ func (g *Group) NewPacketConn(conn net.PacketConn, isExternal bool) net.PacketCo
 	return &PacketConn{PacketConn: conn, group: g, element: item}
 }
 
-func (g *Group) Interrupt(interruptExternalConnections bool) {
+// Track registers closer without wrapping it, for conns whose wrapper would hide
+// interfaces callers need. untrack is safe to call more than once.
+func (g *Group) Track(closer io.Closer, isExternal bool) (untrack func()) {
+	g.access.Lock()
+	element := g.connections.PushBack(&groupConnItem{closer, isExternal})
+	g.access.Unlock()
+	return func() {
+		g.access.Lock()
+		g.connections.Remove(element)
+		g.access.Unlock()
+	}
+}
+
+// Len reports how many conns the group tracks.
+func (g *Group) Len() int {
 	g.access.Lock()
 	defer g.access.Unlock()
-	var toDelete []*list.Element[*groupConnItem]
-	for element := g.connections.Front(); element != nil; element = element.Next() {
+	return g.connections.Len()
+}
+
+// Interrupt closes the matching conns concurrently, after releasing the lock,
+// so a slow or re-entrant Close can't stall the group or the other conns. A
+// concurrent Interrupt may return before the other one's closes finish.
+func (g *Group) Interrupt(interruptExternalConnections bool) {
+	g.access.Lock()
+	var toClose []io.Closer
+	for element := g.connections.Front(); element != nil; {
+		next := element.Next()
 		if !element.Value.isExternal || interruptExternalConnections {
-			element.Value.conn.Close()
-			toDelete = append(toDelete, element)
+			toClose = append(toClose, element.Value.conn)
+			g.connections.Remove(element)
 		}
+		element = next
 	}
-	for _, element := range toDelete {
-		g.connections.Remove(element)
+	g.access.Unlock()
+	if len(toClose) == 1 {
+		toClose[0].Close()
+		return
 	}
+	var wg sync.WaitGroup
+	for _, conn := range toClose {
+		wg.Go(func() { conn.Close() })
+	}
+	wg.Wait()
 }

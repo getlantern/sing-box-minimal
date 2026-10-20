@@ -13,6 +13,7 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/interrupt"
 	"github.com/sagernet/sing-box/common/sniff"
 	"github.com/sagernet/sing-box/common/tlsfragment"
 	C "github.com/sagernet/sing-box/constant"
@@ -126,6 +127,7 @@ func (m *ConnectionManager) NewConnection(ctx context.Context, this N.Dialer, co
 		m.logger.ErrorContext(ctx, err)
 		return
 	}
+	onClose = trackInterruptible(ctx, onClose, conn, remoteConn)
 	if metadata.TLSFragment || metadata.TLSRecordFragment {
 		remoteConn = tf.NewConn(remoteConn, ctx, metadata.TLSFragment, metadata.TLSRecordFragment, metadata.TLSFragmentFallbackDelay)
 	}
@@ -213,6 +215,7 @@ func (m *ConnectionManager) NewPacketConnection(ctx context.Context, this N.Dial
 		m.logger.ErrorContext(ctx, "report handshake success: ", err)
 		return
 	}
+	onClose = trackInterruptible(ctx, onClose, conn, remotePacketConn)
 	if destinationAddress.IsValid() {
 		var originDestination M.Socksaddr
 		if metadata.RouteOriginalDestination.IsValid() {
@@ -256,6 +259,35 @@ func (m *ConnectionManager) NewPacketConnection(ctx context.Context, this N.Dial
 	var done atomic.Bool
 	go m.packetConnectionCopy(ctx, conn, destination, false, &done, onClose)
 	go m.packetConnectionCopy(ctx, destination, conn, true, &done, onClose)
+}
+
+// trackInterruptible lets ctx's interrupt groups close both sides of the flow,
+// so a half-closed flow still ends; onClose untracks it. Track only after the
+// handshake: closing an inbound mid-handshake races lazy TUN conns.
+func trackInterruptible(ctx context.Context, onClose N.CloseHandlerFunc, inbound io.Closer, remote io.Closer) N.CloseHandlerFunc {
+	groups := interrupt.GroupsFromContext(ctx)
+	if len(groups) == 0 {
+		return onClose
+	}
+	closer := flowCloser{inbound, remote}
+	external := interrupt.IsExternalConnectionFromContext(ctx)
+	untracks := make([]func(), 0, len(groups))
+	for _, group := range groups {
+		untracks = append(untracks, group.Track(closer, external))
+	}
+	return N.AppendClose(onClose, func(error) {
+		for _, untrack := range untracks {
+			untrack()
+		}
+	})
+}
+
+type flowCloser [2]io.Closer
+
+// Close closes the remote first so a slow inbound Close can't keep the retired
+// path open.
+func (c flowCloser) Close() error {
+	return common.Close(c[1], c[0])
 }
 
 func (m *ConnectionManager) connectionCopy(ctx context.Context, source net.Conn, destination net.Conn, direction bool, done *atomic.Bool, onClose N.CloseHandlerFunc) {
