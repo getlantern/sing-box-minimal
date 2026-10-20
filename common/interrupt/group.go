@@ -82,18 +82,21 @@ func (g *Group) Len() int {
 // so a slow or re-entrant Close can't stall the group or the other conns. A
 // concurrent Interrupt may return before the other one's closes finish.
 func (g *Group) Interrupt(interruptExternalConnections bool) {
-	g.interrupt(interruptExternalConnections, false)
+	closeAll(g.take(interruptExternalConnections, false))
 }
 
-// Retire interrupts every conn and closes anything tracked or wrapped
-// afterwards, for a group replaced wholesale: conns whose dial or async
-// dispatch outlives the switch are still closed.
+// Retire marks the group retired before returning, so conns tracked or wrapped
+// afterwards are closed at once, then closes its current conns in the
+// background. For groups replaced wholesale: conns whose dial or async dispatch
+// outlives the switch are still closed, and callers holding a lock don't block
+// on a slow Close.
 func (g *Group) Retire() {
-	g.interrupt(true, true)
+	go closeAll(g.take(true, true))
 }
 
-func (g *Group) interrupt(interruptExternalConnections bool, retire bool) {
+func (g *Group) take(interruptExternalConnections bool, retire bool) []io.Closer {
 	g.access.Lock()
+	defer g.access.Unlock()
 	if retire {
 		g.retired = true
 	}
@@ -106,13 +109,16 @@ func (g *Group) interrupt(interruptExternalConnections bool, retire bool) {
 		}
 		element = next
 	}
-	g.access.Unlock()
-	if len(toClose) == 1 {
-		toClose[0].Close()
+	return toClose
+}
+
+func closeAll(closers []io.Closer) {
+	if len(closers) == 1 {
+		closers[0].Close()
 		return
 	}
 	var wg sync.WaitGroup
-	for _, conn := range toClose {
+	for _, conn := range closers {
 		wg.Go(func() { conn.Close() })
 	}
 	wg.Wait()

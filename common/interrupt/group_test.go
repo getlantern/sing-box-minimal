@@ -76,9 +76,10 @@ func TestGroupRetireClosesLateTracks(t *testing.T) {
 	early, late := &countingCloser{}, &countingCloser{}
 	g.Track(early, true)
 	g.Retire()
-	if early.closes.Load() != 1 {
-		t.Fatal("Retire must close tracked conns")
+	if !g.Retired() {
+		t.Fatal("Retire must mark the group retired before returning")
 	}
+	waitCloses(t, early, 1, "Retire must close tracked conns")
 	untrack := g.Track(late, true)
 	untrack()
 	waitCloses(t, late, 1, "tracking on a retired group must close the conn")
