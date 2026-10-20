@@ -1,0 +1,48 @@
+name: Windows process paths
+
+on:
+  push:
+    paths:
+      - "common/processpath/**"
+      - "route/rule/**"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/windows-process-path.yml"
+  pull_request:
+    paths:
+      - "common/processpath/**"
+      - "route/rule/**"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/windows-process-path.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: windows-2025
+    timeout-minutes: 15
+    env:
+      CGO_ENABLED: "0"
+      SING_BOX_REQUIRE_SHORT_PATH_TEST: "1"
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Enable short paths on the test volume
+        shell: pwsh
+        run: |
+          fsutil 8dot3name set 2
+          if ($LASTEXITCODE -ne 0) { throw "Could not enable per-volume 8.3 settings" }
+          $volume = [System.IO.Path]::GetPathRoot($env:TEMP).TrimEnd('\')
+          fsutil 8dot3name set $volume 0
+          if ($LASTEXITCODE -ne 0) { throw "Could not enable 8.3 aliases on $volume" }
+      - name: Test process path identity and matching
+        run: go test -count=1 -timeout=5m ./common/processpath ./route/rule

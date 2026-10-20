@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/processpath"
 	C "github.com/sagernet/sing-box/constant"
 )
 
@@ -20,10 +21,7 @@ func NewProcessPathItem(processNameList []string) *ProcessPathItem {
 		processMap: make(map[string]bool),
 	}
 	for _, processName := range processNameList {
-		if C.IsWindows {
-			processName = strings.ToLower(processName)
-		}
-		rule.processMap[processName] = true
+		rule.processMap[processpath.Normalize(processName)] = true
 	}
 	return rule
 }
@@ -37,6 +35,9 @@ func (r *ProcessPathItem) Match(metadata *adapter.InboundContext) bool {
 		path = strings.ToLower(path)
 	}
 	if path != "" && r.processMap[path] {
+		return true
+	}
+	if C.IsWindows && path != "" && r.processMap[processpath.Normalize(path)] {
 		return true
 	}
 	if C.IsAndroid {
