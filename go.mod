@@ -1,6 +1,6 @@
 module github.com/sagernet/sing-box
 
-go 1.24.7
+go 1.25.0
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.26.0
