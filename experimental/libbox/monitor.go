@@ -3,6 +3,7 @@ package libbox
 import (
 	"net"
 
+	"github.com/sagernet/sing-box/service/powerreport"
 	tun "github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common/control"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -17,9 +18,10 @@ var (
 
 type platformDefaultInterfaceMonitor struct {
 	*platformInterfaceWrapper
-	logger       logger.Logger
-	callbacks    list.List[tun.DefaultInterfaceUpdateCallback]
-	myInterfaces []string
+	logger                      logger.Logger
+	callbacks                   list.List[tun.DefaultInterfaceUpdateCallback]
+	myInterfaces                []string
+	defaultInterfaceInitialized bool
 }
 
 func (m *platformDefaultInterfaceMonitor) Start() error {
@@ -56,6 +58,18 @@ func (m *platformDefaultInterfaceMonitor) UnregisterCallback(element *list.Eleme
 	m.callbacks.Remove(element)
 }
 
+func (m *platformDefaultInterfaceMonitor) UpdateNetworkPath(networkPath string) {
+	m.logger.Debug("updated network path: ", networkPath)
+	if m.powerManager == nil {
+		return
+	}
+	recorder := m.powerManager.Recorder()
+	if recorder == nil {
+		return
+	}
+	recorder.UpdateNetworkPath(networkPath)
+}
+
 func (m *platformDefaultInterfaceMonitor) UpdateDefaultInterface(interfaceName string, interfaceIndex32 int32, isExpensive bool, isConstrained bool) {
 	if sFixAndroidStack {
 		done := make(chan struct{})
@@ -70,6 +84,24 @@ func (m *platformDefaultInterfaceMonitor) UpdateDefaultInterface(interfaceName s
 }
 
 func (m *platformDefaultInterfaceMonitor) updateDefaultInterface(interfaceName string, interfaceIndex32 int32, isExpensive bool, isConstrained bool) {
+	var recorder *powerreport.Recorder
+	if m.powerManager != nil {
+		recorder = m.powerManager.Recorder()
+	}
+	if recorder != nil {
+		networkType := interfaceName
+		if interfaceIndex32 == -1 {
+			networkType = "none"
+		} else {
+			if isExpensive {
+				networkType += ",expensive"
+			}
+			if isConstrained {
+				networkType += ",constrained"
+			}
+		}
+		recorder.UpdateNetworkType(networkType)
+	}
 	m.isExpensive = isExpensive
 	m.isConstrained = isConstrained
 	err := m.networkManager.UpdateInterfaces()
@@ -79,6 +111,7 @@ func (m *platformDefaultInterfaceMonitor) updateDefaultInterface(interfaceName s
 	m.defaultInterfaceAccess.Lock()
 	if interfaceIndex32 == -1 {
 		m.defaultInterface = nil
+		m.defaultInterfaceInitialized = true
 		callbacks := m.callbacks.Array()
 		m.defaultInterfaceAccess.Unlock()
 		for _, callback := range callbacks {
@@ -89,11 +122,8 @@ func (m *platformDefaultInterfaceMonitor) updateDefaultInterface(interfaceName s
 	oldInterface := m.defaultInterface
 	newInterface, err := m.networkManager.InterfaceFinder().ByIndex(int(interfaceIndex32))
 	if err != nil {
-		// The platform reported this interface as the default, but InterfaceFinder
-		// doesn't know about it. This commonly happens with VPN-created TUN
-		// interfaces on Android: the connectivity callback reports tun0 as the
-		// default interface, but GetInterfaces() only returns physical interfaces.
-		// Fall back to constructing the interface from the callback parameters.
+		// Android can report a VPN TUN interface as the default, but
+		// GetInterfaces returns only physical interfaces.
 		m.logger.Debug(E.Cause(err, "find updated interface: ", interfaceName, ", using callback parameters as fallback"))
 		newInterface = &control.Interface{
 			Index: int(interfaceIndex32),
@@ -102,10 +132,11 @@ func (m *platformDefaultInterfaceMonitor) updateDefaultInterface(interfaceName s
 		}
 	}
 	m.defaultInterface = newInterface
-	if oldInterface != nil && oldInterface.Name == m.defaultInterface.Name && oldInterface.Index == m.defaultInterface.Index {
+	if m.defaultInterfaceInitialized && oldInterface != nil && oldInterface.Name == m.defaultInterface.Name && oldInterface.Index == m.defaultInterface.Index {
 		m.defaultInterfaceAccess.Unlock()
 		return
 	}
+	m.defaultInterfaceInitialized = true
 	callbacks := m.callbacks.Array()
 	m.defaultInterfaceAccess.Unlock()
 	for _, callback := range callbacks {
