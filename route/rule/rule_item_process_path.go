@@ -37,7 +37,7 @@ func (r *ProcessPathItem) Match(metadata *adapter.InboundContext) bool {
 	if path != "" && r.processMap[path] {
 		return true
 	}
-	if C.IsWindows && path != "" && r.processMap[processpath.Normalize(path)] {
+	if C.IsWindows && path != "" && r.processMap[metadata.NormalizedProcessPath()] {
 		return true
 	}
 	if C.IsAndroid {

@@ -246,6 +246,7 @@ func (r *abstractLogicalRule) matchStatesWithBase(metadata *adapter.InboundConte
 			nestedMetadata := *metadata
 			nestedMetadata.ResetRuleCache()
 			nestedStateSet := matchHeadlessRuleStatesWithBase(rule, &nestedMetadata, evaluationBase)
+			metadata.CopyProcessPathCacheFrom(&nestedMetadata)
 			if nestedStateSet.isEmpty() {
 				if r.invert {
 					return emptyRuleMatchState().withBase(base)
@@ -259,6 +260,7 @@ func (r *abstractLogicalRule) matchStatesWithBase(metadata *adapter.InboundConte
 			nestedMetadata := *metadata
 			nestedMetadata.ResetRuleCache()
 			stateSet = stateSet.merge(matchHeadlessRuleStatesWithBase(rule, &nestedMetadata, evaluationBase))
+			metadata.CopyProcessPathCacheFrom(&nestedMetadata)
 		}
 		if stateSet.isEmpty() {
 			if r.invert {

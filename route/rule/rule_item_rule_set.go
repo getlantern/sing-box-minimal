@@ -56,6 +56,7 @@ func (r *RuleSetItem) matchStatesWithBase(metadata *adapter.InboundContext, base
 		nestedMetadata.IPCIDRMatchSource = r.ipCidrMatchSource
 		nestedMetadata.IPCIDRAcceptEmpty = r.ipCidrAcceptEmpty
 		stateSet = stateSet.merge(matchHeadlessRuleStatesWithBase(ruleSet, &nestedMetadata, base))
+		metadata.CopyProcessPathCacheFrom(&nestedMetadata)
 	}
 	return stateSet
 }

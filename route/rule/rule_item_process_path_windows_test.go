@@ -63,7 +63,21 @@ func TestProcessPathItemWindowsInvertedRule(t *testing.T) {
 	}
 }
 
-func windowsProcessPathFixture(t *testing.T) (string, string) {
+func TestProcessPathItemWindowsUnicodeShortPath(t *testing.T) {
+	path, short := windowsProcessPathFixture(t, "İbrahim")
+	// Keep the Unicode directory spelling while shortening only the executable.
+	runtimePath := filepath.Join(filepath.Dir(path), filepath.Base(short))
+	require.NotEqual(t, path, runtimePath)
+	owner := &adapter.ConnectionOwner{ProcessPath: runtimePath}
+	metadata := &adapter.InboundContext{ProcessInfo: owner}
+	assert.True(t, NewProcessPathItem([]string{path}).Match(metadata))
+	assert.Equal(t, runtimePath, owner.ProcessPath)
+	assert.True(t, NewProcessPathItem([]string{runtimePath}).Match(&adapter.InboundContext{
+		ProcessInfo: &adapter.ConnectionOwner{ProcessPath: path},
+	}))
+}
+
+func windowsProcessPathFixture(t *testing.T, subdirs ...string) (string, string) {
 	t.Helper()
 	input, err := windows.UTF16PtrFromString(`\\?\` + t.TempDir())
 	require.NoError(t, err)
@@ -73,6 +87,10 @@ func windowsProcessPathFixture(t *testing.T) (string, string) {
 	require.Positive(t, n)
 	require.Less(t, int(n), len(buffer))
 	dir := strings.TrimPrefix(windows.UTF16ToString(buffer[:n]), `\\?\`)
+	for _, subdir := range subdirs {
+		dir = filepath.Join(dir, subdir)
+	}
+	require.NoError(t, os.MkdirAll(dir, 0o700))
 	path := filepath.Join(dir, "Launcher Child Executable.exe")
 	require.NoError(t, os.WriteFile(path, nil, 0o600))
 	input, err = windows.UTF16PtrFromString(`\\?\` + path)
@@ -82,7 +100,7 @@ func windowsProcessPathFixture(t *testing.T) (string, string) {
 	require.Positive(t, n)
 	require.Less(t, int(n), len(buffer))
 	short := strings.TrimPrefix(windows.UTF16ToString(buffer[:n]), `\\?\`)
-	if strings.EqualFold(short, path) {
+	if strings.EqualFold(filepath.Base(short), filepath.Base(path)) {
 		if os.Getenv("SING_BOX_REQUIRE_SHORT_PATH_TEST") == "1" {
 			t.Fatal("8.3 aliases are disabled on the test volume")
 		}

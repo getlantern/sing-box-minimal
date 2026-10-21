@@ -233,6 +233,7 @@ func (s *LocalRuleSet) matchStatesWithBase(metadata *adapter.InboundContext, bas
 		nestedMetadata := *metadata
 		nestedMetadata.ResetRuleMatchCache()
 		stateSet = stateSet.merge(matchHeadlessRuleStatesWithBase(rule, &nestedMetadata, base))
+		metadata.CopyProcessPathCacheFrom(&nestedMetadata)
 	}
 	return stateSet
 }

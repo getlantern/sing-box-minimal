@@ -388,6 +388,7 @@ func (s *RemoteRuleSet) matchStatesWithBase(metadata *adapter.InboundContext, ba
 		nestedMetadata := *metadata
 		nestedMetadata.ResetRuleMatchCache()
 		stateSet = stateSet.merge(matchHeadlessRuleStatesWithBase(rule, &nestedMetadata, base))
+		metadata.CopyProcessPathCacheFrom(&nestedMetadata)
 	}
 	return stateSet
 }

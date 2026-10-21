@@ -5,6 +5,7 @@ import (
 	"net/netip"
 	"time"
 
+	"github.com/sagernet/sing-box/common/processpath"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
@@ -86,6 +87,9 @@ type InboundContext struct {
 	QueryType            uint16
 	FakeIP               bool
 
+	processPathSource     string
+	normalizedProcessPath string
+
 	// rule cache
 
 	IPCIDRMatchSource bool
@@ -97,6 +101,29 @@ type InboundContext struct {
 	DestinationPortMatch         bool
 	DidMatch                     bool
 	IgnoreDestinationIPCIDRMatch bool
+}
+
+// NormalizedProcessPath caches the path identity across rule evaluations without
+// changing ProcessInfo, which can be shared with other connections.
+func (c *InboundContext) NormalizedProcessPath() string {
+	if c.ProcessInfo == nil {
+		return ""
+	}
+	path := c.ProcessInfo.ProcessPath
+	if path != c.processPathSource {
+		c.processPathSource = path
+		c.normalizedProcessPath = processpath.Normalize(path)
+	}
+	return c.normalizedProcessPath
+}
+
+// CopyProcessPathCacheFrom retains a nested rule's cached identity without
+// copying its match state or a cache for a different process path.
+func (c *InboundContext) CopyProcessPathCacheFrom(other *InboundContext) {
+	if c.ProcessInfo != nil && c.ProcessInfo.ProcessPath == other.processPathSource {
+		c.processPathSource = other.processPathSource
+		c.normalizedProcessPath = other.normalizedProcessPath
+	}
 }
 
 func (c *InboundContext) ResetRuleCache() {

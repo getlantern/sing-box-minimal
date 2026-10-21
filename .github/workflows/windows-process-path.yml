@@ -3,6 +3,7 @@ name: Windows process paths
 on:
   push:
     paths:
+      - "adapter/**"
       - "common/processpath/**"
       - "route/rule/**"
       - "go.mod"
@@ -10,6 +11,7 @@ on:
       - ".github/workflows/windows-process-path.yml"
   pull_request:
     paths:
+      - "adapter/**"
       - "common/processpath/**"
       - "route/rule/**"
       - "go.mod"
@@ -45,4 +47,4 @@ jobs:
           fsutil 8dot3name set $volume 0
           if ($LASTEXITCODE -ne 0) { throw "Could not enable 8.3 aliases on $volume" }
       - name: Test process path identity and matching
-        run: go test -count=1 -timeout=5m ./common/processpath ./route/rule
+        run: go test -count=1 -timeout=5m ./adapter ./common/processpath ./route/rule
