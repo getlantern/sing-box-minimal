@@ -122,11 +122,8 @@ func (m *platformDefaultInterfaceMonitor) updateDefaultInterface(interfaceName s
 	oldInterface := m.defaultInterface
 	newInterface, err := m.networkManager.InterfaceFinder().ByIndex(int(interfaceIndex32))
 	if err != nil {
-		// The platform reported this interface as the default, but InterfaceFinder
-		// doesn't know about it. This commonly happens with VPN-created TUN
-		// interfaces on Android: the connectivity callback reports tun0 as the
-		// default interface, but GetInterfaces() only returns physical interfaces.
-		// Fall back to constructing the interface from the callback parameters.
+		// Android can report a VPN TUN interface as the default, but
+		// GetInterfaces returns only physical interfaces.
 		m.logger.Debug(E.Cause(err, "find updated interface: ", interfaceName, ", using callback parameters as fallback"))
 		newInterface = &control.Interface{
 			Index: int(interfaceIndex32),
