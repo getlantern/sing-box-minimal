@@ -52,7 +52,7 @@ func TestLocalRuleSetConcurrentReload(t *testing.T) {
 			for range 500 {
 				metadata := testMetadata("example.com")
 				s.Match(&metadata)
-				s.String()
+				_ = s.String()
 				s.Metadata()
 				s.ExtractIPSet()
 			}
@@ -63,12 +63,10 @@ func TestLocalRuleSetConcurrentReload(t *testing.T) {
 			}
 		},
 	} {
-		workers.Add(1)
-		go func() {
-			defer workers.Done()
+		workers.Go(func() {
 			<-start
 			task()
-		}()
+		})
 	}
 	close(start)
 	runLocalRuleSetTask(t, workers.Wait)

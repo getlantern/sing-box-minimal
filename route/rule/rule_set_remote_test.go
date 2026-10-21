@@ -2,7 +2,6 @@ package rule
 
 import (
 	"context"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -13,8 +12,6 @@ import (
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/logger"
-	M "github.com/sagernet/sing/common/metadata"
-	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/service"
 
 	"github.com/stretchr/testify/require"
@@ -22,20 +19,25 @@ import (
 
 const testRuleSetSource = `{"version":1,"rules":[{"domain":["example.com"]}]}`
 
-type testOutbound struct {
-	adapter.Outbound
+type testHTTPTransport struct {
+	*http.Transport
 }
 
-func (testOutbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
-	return N.SystemDialer.DialContext(ctx, network, destination)
+func (t testHTTPTransport) Reset() {
+	t.CloseIdleConnections()
 }
 
-type testOutboundManager struct {
-	adapter.OutboundManager
+type testHTTPClientManager struct {
+	adapter.HTTPClientManager
+	transport adapter.HTTPTransport
 }
 
-func (testOutboundManager) Default() adapter.Outbound {
-	return testOutbound{}
+func (m testHTTPClientManager) DefaultTransport() adapter.HTTPTransport {
+	return m.transport
+}
+
+func newTestHTTPClient() *http.Client {
+	return &http.Client{Transport: testHTTPTransport{&http.Transport{}}}
 }
 
 func setTimeout(t *testing.T, target *time.Duration, value time.Duration) {
@@ -55,12 +57,15 @@ func newTestServer(t *testing.T, handler func(w http.ResponseWriter, r *http.Req
 }
 
 func newTestRemoteRuleSet(ctx context.Context, url string) *RemoteRuleSet {
-	return NewRemoteRuleSet(ctx, logger.NOP(), option.RuleSet{
+	ruleSet, err := NewRemoteRuleSet(ctx, logger.NOP(), "test", option.RuleSet{
 		Type:          C.RuleSetTypeRemote,
-		Tag:           "test",
 		Format:        C.RuleSetFormatSource,
 		RemoteOptions: option.RemoteRuleSet{URL: url},
 	})
+	if err != nil {
+		panic(err)
+	}
+	return ruleSet
 }
 
 func block(r *http.Request, done <-chan struct{}) {
@@ -78,10 +83,10 @@ func TestRemoteRuleSetFetchStalledBody(t *testing.T) {
 		block(r, done)
 	})
 	ruleSet := newTestRemoteRuleSet(context.Background(), server.URL)
-	ruleSet.dialer = N.SystemDialer
+	ruleSet.httpClient = newTestHTTPClient()
 
 	start := time.Now()
-	err := ruleSet.fetch(context.Background(), nil)
+	err := ruleSet.fetch(context.Background(), false)
 	require.ErrorIs(t, err, errFetchStalled)
 	require.Less(t, time.Since(start), 5*time.Second)
 	require.True(t, ruleSet.lastUpdated.IsZero())
@@ -98,10 +103,10 @@ func TestRemoteRuleSetFetchSlowBodyNotStalled(t *testing.T) {
 		}
 	})
 	ruleSet := newTestRemoteRuleSet(context.Background(), server.URL)
-	ruleSet.dialer = N.SystemDialer
+	ruleSet.httpClient = newTestHTTPClient()
 
 	start := time.Now()
-	require.NoError(t, ruleSet.fetch(context.Background(), nil))
+	require.NoError(t, ruleSet.fetch(context.Background(), false))
 	require.Greater(t, time.Since(start), fetchStallTimeout)
 	require.Len(t, ruleSet.rules, 1)
 }
@@ -111,10 +116,10 @@ func TestRemoteRuleSetStartContextBoundsInitialFetch(t *testing.T) {
 	server := newTestServer(t, func(w http.ResponseWriter, r *http.Request, done <-chan struct{}) {
 		block(r, done)
 	})
-	ctx := service.ContextWith[adapter.OutboundManager](context.Background(), testOutboundManager{})
+	ctx := service.ContextWith[adapter.HTTPClientManager](context.Background(), testHTTPClientManager{transport: testHTTPTransport{&http.Transport{}}})
 	ruleSet := newTestRemoteRuleSet(ctx, server.URL)
 	t.Cleanup(func() { ruleSet.Close() })
-	startContext := adapter.NewHTTPStartContext(ctx)
+	startContext := adapter.NewHTTPStartContext()
 	t.Cleanup(startContext.Close)
 
 	start := time.Now()
@@ -168,12 +173,10 @@ func TestRemoteRuleSetConcurrentReload(t *testing.T) {
 			}
 		},
 	} {
-		workers.Add(1)
-		go func() {
-			defer workers.Done()
+		workers.Go(func() {
 			<-start
 			task()
-		}()
+		})
 	}
 	close(start)
 	runRemoteRuleSetTask(t, workers.Wait)

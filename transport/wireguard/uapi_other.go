@@ -14,6 +14,8 @@ func uapiListen(name string) (net.Listener, error) {
 	if uapiErr != nil {
 		return nil, fmt.Errorf("failed to open uapi socket for %s: %w", name, uapiErr)
 	}
+	// UAPIListen wraps a duplicate of this descriptor, so release the original.
+	defer fileUAPI.Close()
 
 	uapi, err := ipc.UAPIListen(name, fileUAPI)
 	if err != nil {

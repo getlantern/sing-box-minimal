@@ -5,16 +5,15 @@ import (
 	"net"
 	"net/netip"
 	"sync"
-	"syscall"
 	"testing"
 
 	"github.com/sagernet/sing-box/adapter"
-	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common/control"
 )
 
 // mockInterfaceFinder implements control.InterfaceFinder for testing.
 type mockInterfaceFinder struct {
+	control.InterfaceFinder
 	byIndexFunc func(index int) (*control.Interface, error)
 }
 
@@ -24,45 +23,25 @@ func (f *mockInterfaceFinder) ByName(name string) (*control.Interface, error) { 
 func (f *mockInterfaceFinder) ByIndex(index int) (*control.Interface, error) {
 	return f.byIndexFunc(index)
 }
+
 func (f *mockInterfaceFinder) ByAddr(addr netip.Addr) (*control.Interface, error) { return nil, nil }
 
 // mockNetworkManager implements adapter.NetworkManager for testing.
 type mockNetworkManager struct {
+	adapter.NetworkManager
 	finder          control.InterfaceFinder
 	updateErr       error
 	updateCallCount int
 }
 
-func (m *mockNetworkManager) Start(stage adapter.StartStage) error  { return nil }
-func (m *mockNetworkManager) Close() error                          { return nil }
-func (m *mockNetworkManager) Initialize(ruleSets []adapter.RuleSet) {}
-func (m *mockNetworkManager) NeedWIFIState() bool                   { return false }
 func (m *mockNetworkManager) InterfaceFinder() control.InterfaceFinder {
 	return m.finder
 }
+
 func (m *mockNetworkManager) UpdateInterfaces() error {
 	m.updateCallCount++
 	return m.updateErr
 }
-func (m *mockNetworkManager) DefaultNetworkInterface() *adapter.NetworkInterface { return nil }
-func (m *mockNetworkManager) NetworkInterfaces() []adapter.NetworkInterface      { return nil }
-func (m *mockNetworkManager) AutoDetectInterface() bool                          { return false }
-func (m *mockNetworkManager) AutoDetectInterfaceFunc() control.Func              { return nil }
-func (m *mockNetworkManager) ProtectFunc() control.Func                          { return nil }
-func (m *mockNetworkManager) DefaultOptions() adapter.NetworkOptions {
-	return adapter.NetworkOptions{}
-}
-func (m *mockNetworkManager) RegisterAutoRedirectOutputMark(mark uint32) error { return nil }
-func (m *mockNetworkManager) AutoRedirectOutputMark() uint32                   { return 0 }
-func (m *mockNetworkManager) AutoRedirectOutputMarkFunc() control.Func {
-	return func(network, address string, conn syscall.RawConn) error { return nil }
-}
-func (m *mockNetworkManager) NetworkMonitor() tun.NetworkUpdateMonitor      { return nil }
-func (m *mockNetworkManager) InterfaceMonitor() tun.DefaultInterfaceMonitor { return nil }
-func (m *mockNetworkManager) PackageManager() tun.PackageManager            { return nil }
-func (m *mockNetworkManager) WIFIState() adapter.WIFIState                  { return adapter.WIFIState{} }
-func (m *mockNetworkManager) ResetNetwork()                                 {}
-func (m *mockNetworkManager) UpdateWIFIState()                              {}
 
 // mockLogger implements logger.Logger and records which levels were called.
 type mockLogger struct {
@@ -283,8 +262,9 @@ func TestUpdateDefaultInterface_Deduplication(t *testing.T) {
 	}
 	mon, _, _ := newTestMonitor(finder)
 
-	// Pre-set the same interface.
+	// Pre-set the same interface, as after an earlier update.
 	mon.defaultInterface = wlan0
+	mon.defaultInterfaceInitialized = true
 
 	rec := &callbackRecorder{}
 	rec.register(mon)
