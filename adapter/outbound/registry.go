@@ -46,6 +46,12 @@ func NewRegistry() *Registry {
 	}
 }
 
+func (r *Registry) OptionTypes() []string {
+	r.access.Lock()
+	defer r.access.Unlock()
+	return slices.Sorted(maps.Keys(r.optionsType))
+}
+
 func (r *Registry) CreateOptions(outboundType string) (any, bool) {
 	r.access.Lock()
 	defer r.access.Unlock()

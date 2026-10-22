@@ -82,6 +82,19 @@ func TestProcessPathItemWindowsNestedCache(t *testing.T) {
 				}}
 			},
 		},
+		{
+			name: "mergeable single-rule sets",
+			build: func(first, second adapter.HeadlessRule) adapter.HeadlessRule {
+				firstRule := headlessDefaultRule(t, func(rule *abstractDefaultRule) { addOtherItem(rule, first) })
+				secondRule := headlessDefaultRule(t, func(rule *abstractDefaultRule) { addOtherItem(rule, second) })
+				return routeRuleForTest(func(rule *abstractDefaultRule) {
+					addRuleSetItem(rule, &RuleSetItem{setList: []adapter.RuleSet{
+						newLocalRuleSetForTest("first", firstRule),
+						newRemoteRuleSetForTest("second", secondRule),
+					}})
+				})
+			},
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			path, short := windowsProcessPathFixture(t)

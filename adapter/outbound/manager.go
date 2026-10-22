@@ -55,7 +55,7 @@ func (m *Manager) Start(stage adapter.StartStage) error {
 	}
 	m.started = true
 	m.stage = stage
-	if stage == adapter.StartStateStart {
+	if stage == adapter.StartStateInitialize {
 		if m.defaultTag != "" && m.defaultOutbound == nil {
 			defaultEndpoint, loaded := m.endpoint.Get(m.defaultTag)
 			if !loaded {
@@ -74,20 +74,19 @@ func (m *Manager) Start(stage adapter.StartStage) error {
 			m.outboundByTag[directOutbound.Tag()] = directOutbound
 			m.defaultOutbound = directOutbound
 		}
-		outbounds := m.outbounds
-		m.access.Unlock()
+	}
+	outbounds := m.outbounds
+	m.access.Unlock()
+	if stage == adapter.StartStateStart {
 		return m.startOutbounds(append(outbounds, common.Map(m.endpoint.Endpoints(), func(it adapter.Endpoint) adapter.Outbound { return it })...))
-	} else {
-		outbounds := m.outbounds
-		m.access.Unlock()
-		for _, outbound := range outbounds {
-			name := "outbound/" + outbound.Type() + "[" + outbound.Tag() + "]"
-			done := adapter.LogElapsed(m.logger, stage, " ", name)
-			err := adapter.LegacyStart(outbound, stage)
-			done()
-			if err != nil {
-				return E.Cause(err, stage, " ", name)
-			}
+	}
+	for _, outbound := range outbounds {
+		name := "outbound/" + outbound.Type() + "[" + outbound.Tag() + "]"
+		done := adapter.LogElapsed(m.logger, stage, " ", name)
+		err := adapter.LegacyStart(outbound, stage)
+		done()
+		if err != nil {
+			return E.Cause(err, stage, " ", name)
 		}
 	}
 	return nil
@@ -175,13 +174,8 @@ func (m *Manager) Close() error {
 	m.started = false
 	outbounds := m.outbounds
 	m.outbounds = nil
-	// Keep the map in sync with the slice: leaving stale entries behind is
-	// what made Remove racing Close find a tag with no slice entry. The
-	// dependency bookkeeping goes with them. defaultOutbound is deliberately
-	// left alone: route dispatch dereferences Default() without a nil check
-	// (route/route.go), so in-flight connections racing shutdown must keep
-	// getting the stale-but-closed outbound (which fails at dial) rather
-	// than a nil (which would panic).
+	// defaultOutbound is kept: routing dereferences Default() without a nil
+	// check, so connections racing shutdown must get a closed outbound, not nil.
 	clear(m.outboundByTag)
 	clear(m.dependByTag)
 	m.access.Unlock()
@@ -235,11 +229,7 @@ func (m *Manager) Remove(tag string) error {
 	})
 	delete(m.outboundByTag, tag)
 	if index == -1 {
-		// Defense in depth: the tag is in the map but not the slice. No code
-		// path should produce this state (Close clears both together), but if
-		// it ever reappears, heal it instead of panicking — skip the slice
-		// splice and fall through so the rest of the bookkeeping (default
-		// outbound, dependency entries, close) still runs.
+		// The map and slice disagree; finish the removal instead of panicking.
 		m.logger.Debug("outbound/", outbound.Type(), "[", tag, "] already removed from active list")
 	} else {
 		m.outbounds = append(m.outbounds[:index], m.outbounds[index+1:]...)
@@ -312,8 +302,7 @@ func (m *Manager) Create(ctx context.Context, router adapter.Router, logger log.
 		if existsIndex != -1 {
 			m.outbounds = append(m.outbounds[:existsIndex], m.outbounds[existsIndex+1:]...)
 		}
-		// The replacement may declare different dependencies; drop the old
-		// outbound's dependBy entries so stale ones can't block Remove later.
+		// Stale dependBy entries would block a later Remove of the dependencies.
 		m.removeDependByEntriesLocked(existsOutbound, tag)
 	}
 	m.outbounds = append(m.outbounds, outbound)

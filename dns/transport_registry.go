@@ -46,6 +46,12 @@ func NewTransportRegistry() *TransportRegistry {
 	}
 }
 
+func (r *TransportRegistry) OptionTypes() []string {
+	r.access.Lock()
+	defer r.access.Unlock()
+	return slices.Sorted(maps.Keys(r.optionsType))
+}
+
 func (r *TransportRegistry) CreateOptions(transportType string) (any, bool) {
 	r.access.Lock()
 	defer r.access.Unlock()

@@ -23,6 +23,7 @@ func (s *stubOutbound) Dependencies() []string { return s.deps }
 func (s *stubOutbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 	return nil, nil
 }
+
 func (s *stubOutbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
 	return nil, nil
 }
