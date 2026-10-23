@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/log"
@@ -17,7 +18,7 @@ type Manager struct {
 	ctx          context.Context
 	logger       log.Logger
 	dnsRouter    adapter.DNSRouter
-	mode         string
+	mode         atomic.Pointer[string]
 	modeList     []string
 	updateAccess sync.Mutex
 	updateHooks  []*observable.Subscriber[struct{}]
@@ -30,13 +31,14 @@ func NewManager(ctx context.Context, logger log.Logger, defaultMode string, mode
 	if !common.Contains(modeList, defaultMode) {
 		modeList = append([]string{defaultMode}, modeList...)
 	}
-	return &Manager{
+	manager := &Manager{
 		ctx:       ctx,
 		logger:    logger,
 		dnsRouter: service.FromContext[adapter.DNSRouter](ctx),
-		mode:      defaultMode,
 		modeList:  modeList,
 	}
+	manager.mode.Store(&defaultMode)
+	return manager
 }
 
 func (m *Manager) Name() string {
@@ -53,7 +55,7 @@ func (m *Manager) Start(stage adapter.StartStage) error {
 		if common.Any(m.modeList, func(it string) bool {
 			return strings.EqualFold(it, mode)
 		}) {
-			m.mode = mode
+			m.mode.Store(&mode)
 		}
 	}
 	return nil
@@ -64,7 +66,7 @@ func (m *Manager) Close() error {
 }
 
 func (m *Manager) Mode() string {
-	return m.mode
+	return *m.mode.Load()
 }
 
 func (m *Manager) ModeList() []string {
@@ -86,10 +88,9 @@ func (m *Manager) SetMode(newMode string) {
 	if !common.Contains(m.modeList, newMode) {
 		return
 	}
-	if newMode == m.mode {
+	if *m.mode.Swap(&newMode) == newMode {
 		return
 	}
-	m.mode = newMode
 	m.updateAccess.Lock()
 	for _, hook := range m.updateHooks {
 		hook.Emit(struct{}{})
