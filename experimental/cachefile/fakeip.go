@@ -3,11 +3,9 @@ package cachefile
 import (
 	"net/netip"
 	"os"
-	"time"
 
 	"github.com/sagernet/bbolt"
 	"github.com/sagernet/sing-box/adapter"
-	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 )
@@ -23,7 +21,7 @@ var (
 
 func (c *CacheFile) FakeIPMetadata() *adapter.FakeIPMetadata {
 	var metadata adapter.FakeIPMetadata
-	err := c.batch(func(tx *bbolt.Tx) error {
+	err := c.view(func(tx *bbolt.Tx) error {
 		bucket := tx.Bucket(bucketFakeIP)
 		if bucket == nil {
 			return os.ErrNotExist
@@ -31,10 +29,6 @@ func (c *CacheFile) FakeIPMetadata() *adapter.FakeIPMetadata {
 		metadataBinary := bucket.Get(keyMetadata)
 		if len(metadataBinary) == 0 {
 			return os.ErrInvalid
-		}
-		err := bucket.Delete(keyMetadata)
-		if err != nil {
-			return err
 		}
 		return metadata.UnmarshalBinary(metadataBinary)
 	})
@@ -56,24 +50,6 @@ func (c *CacheFile) FakeIPSaveMetadata(metadata *adapter.FakeIPMetadata) error {
 		}
 		return bucket.Put(keyMetadata, metadataBinary)
 	})
-}
-
-func (c *CacheFile) FakeIPSaveMetadataAsync(metadata *adapter.FakeIPMetadata) {
-	c.saveMetadataAccess.Lock()
-	defer c.saveMetadataAccess.Unlock()
-	c.saveMetadata = metadata
-	if c.saveMetadataTimer == nil {
-		c.saveMetadataTimer = time.AfterFunc(C.FakeIPMetadataSaveInterval, func() {
-			c.saveMetadataAccess.Lock()
-			savedMetadata := c.saveMetadata
-			c.saveMetadataAccess.Unlock()
-			if savedMetadata != nil {
-				_ = c.FakeIPSaveMetadata(savedMetadata)
-			}
-		})
-	} else {
-		c.saveMetadataTimer.Reset(C.FakeIPMetadataSaveInterval)
-	}
 }
 
 func (c *CacheFile) FakeIPStore(address netip.Addr, domain string) error {
