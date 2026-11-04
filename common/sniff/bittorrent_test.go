@@ -108,3 +108,16 @@ func TestSniffNotUTP(t *testing.T) {
 		require.Error(t, err)
 	}
 }
+
+func TestSniffUTPNotWireGuard(t *testing.T) {
+	t.Parallel()
+
+	initiation := make([]byte, 148)
+	initiation[0] = 0x01
+	for i := 4; i < len(initiation); i++ {
+		initiation[i] = byte(i)
+	}
+	var metadata adapter.InboundContext
+	err := sniff.UTP(context.TODO(), &metadata, initiation)
+	require.Error(t, err)
+}
