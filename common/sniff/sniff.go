@@ -44,6 +44,20 @@ func PeekStream(ctx context.Context, metadata *adapter.InboundContext, conn net.
 	}
 	deadline := time.Now().Add(timeout)
 	var sniffError error
+	// An earlier sniff may already hold all the client sent, and a client
+	// that then waits for the server sends nothing more to read.
+	if len(buffers) > 0 {
+		for _, sniffer := range sniffers {
+			err := sniffer(ctx, metadata, bufferedReader(buffers))
+			if err == nil {
+				return nil
+			}
+			sniffError = E.Errors(sniffError, err)
+		}
+		if !errors.Is(sniffError, ErrNeedMoreData) {
+			return sniffError
+		}
+	}
 	for i := 0; ; i++ {
 		err := conn.SetReadDeadline(deadline)
 		if err != nil {
@@ -59,10 +73,7 @@ func PeekStream(ctx context.Context, metadata *adapter.InboundContext, conn net.
 		}
 		sniffError = nil
 		for _, sniffer := range sniffers {
-			reader := io.MultiReader(common.Map(append(buffers, buffer), func(it *buf.Buffer) io.Reader {
-				return bytes.NewReader(it.Bytes())
-			})...)
-			err = sniffer(ctx, metadata, reader)
+			err = sniffer(ctx, metadata, bufferedReader(append(buffers, buffer)))
 			if err == nil {
 				return nil
 			}
@@ -73,6 +84,12 @@ func PeekStream(ctx context.Context, metadata *adapter.InboundContext, conn net.
 		}
 	}
 	return sniffError
+}
+
+func bufferedReader(buffers []*buf.Buffer) io.Reader {
+	return io.MultiReader(common.Map(buffers, func(it *buf.Buffer) io.Reader {
+		return bytes.NewReader(it.Bytes())
+	})...)
 }
 
 func PeekPacket(ctx context.Context, metadata *adapter.InboundContext, packet []byte, sniffers ...PacketSniffer) error {
