@@ -11,6 +11,8 @@ import (
 	"github.com/sagernet/sing/service"
 )
 
+const reservedAddressCount = 1024
+
 var _ adapter.FakeIPStore = (*Store)(nil)
 
 type Store struct {
@@ -25,6 +27,7 @@ type Store struct {
 	addressAccess sync.Mutex
 	inet4Current  netip.Addr
 	inet6Current  netip.Addr
+	reservedCount int
 }
 
 func NewStore(ctx context.Context, logger logger.Logger, inet4Range netip.Prefix, inet6Range netip.Prefix) *Store {
@@ -59,6 +62,14 @@ func broadcastAddress(prefix netip.Prefix) netip.Addr {
 	return netip.AddrFrom16(raw)
 }
 
+func nextAddress(addressRange netip.Prefix, last netip.Addr, current netip.Addr) netip.Addr {
+	address := current.Next()
+	if address == last || !addressRange.Contains(address) {
+		address = addressRange.Addr().Next().Next()
+	}
+	return address
+}
+
 func (s *Store) Start() error {
 	var storage adapter.FakeIPStorage
 	cacheFile := service.FromContext[adapter.CacheFile](s.ctx)
@@ -79,7 +90,9 @@ func (s *Store) Start() error {
 		if s.inet6Range.IsValid() {
 			s.inet6Current = s.inet6Range.Addr().Next()
 		}
-		_ = storage.FakeIPReset()
+		if err := storage.FakeIPReset(); err != nil {
+			s.logger.Warn("reset FakeIP cache: ", err)
+		}
 	}
 	s.storage = storage
 	return nil
@@ -94,14 +107,13 @@ func (s *Store) Close() error {
 		return nil
 	}
 	s.addressAccess.Lock()
-	metadata := &adapter.FakeIPMetadata{
+	defer s.addressAccess.Unlock()
+	return s.storage.FakeIPSaveMetadata(&adapter.FakeIPMetadata{
 		Inet4Range:   s.inet4Range,
 		Inet6Range:   s.inet6Range,
 		Inet4Current: s.inet4Current,
 		Inet6Current: s.inet6Current,
-	}
-	s.addressAccess.Unlock()
-	return s.storage.FakeIPSaveMetadata(metadata)
+	})
 }
 
 func (s *Store) Create(domain string, isIPv6 bool) (netip.Addr, error) {
@@ -117,38 +129,45 @@ func (s *Store) Create(domain string, isIPv6 bool) (netip.Addr, error) {
 		return address, nil
 	}
 
+	if !isIPv6 && !s.inet4Current.IsValid() {
+		return netip.Addr{}, E.New("missing IPv4 fakeip address range")
+	} else if isIPv6 && !s.inet6Current.IsValid() {
+		return netip.Addr{}, E.New("missing IPv6 fakeip address range")
+	}
+	if s.reservedCount == 0 {
+		metadata := &adapter.FakeIPMetadata{
+			Inet4Range:   s.inet4Range,
+			Inet6Range:   s.inet6Range,
+			Inet4Current: s.inet4Current,
+			Inet6Current: s.inet6Current,
+		}
+		for range reservedAddressCount {
+			if metadata.Inet4Current.IsValid() {
+				metadata.Inet4Current = nextAddress(s.inet4Range, s.inet4Last, metadata.Inet4Current)
+			}
+			if metadata.Inet6Current.IsValid() {
+				metadata.Inet6Current = nextAddress(s.inet6Range, s.inet6Last, metadata.Inet6Current)
+			}
+		}
+		err := s.storage.FakeIPSaveMetadata(metadata)
+		if err != nil {
+			return netip.Addr{}, E.Cause(err, "save fakeip metadata")
+		}
+		s.reservedCount = reservedAddressCount
+	}
+	s.reservedCount--
 	var address netip.Addr
 	if !isIPv6 {
-		if !s.inet4Current.IsValid() {
-			return netip.Addr{}, E.New("missing IPv4 fakeip address range")
-		}
-		nextAddress := s.inet4Current.Next()
-		if nextAddress == s.inet4Last || !s.inet4Range.Contains(nextAddress) {
-			nextAddress = s.inet4Range.Addr().Next().Next()
-		}
-		s.inet4Current = nextAddress
-		address = nextAddress
+		s.inet4Current = nextAddress(s.inet4Range, s.inet4Last, s.inet4Current)
+		address = s.inet4Current
 	} else {
-		if !s.inet6Current.IsValid() {
-			return netip.Addr{}, E.New("missing IPv6 fakeip address range")
-		}
-		nextAddress := s.inet6Current.Next()
-		if nextAddress == s.inet6Last || !s.inet6Range.Contains(nextAddress) {
-			nextAddress = s.inet6Range.Addr().Next().Next()
-		}
-		s.inet6Current = nextAddress
-		address = nextAddress
+		s.inet6Current = nextAddress(s.inet6Range, s.inet6Last, s.inet6Current)
+		address = s.inet6Current
 	}
 	err := s.storage.FakeIPStore(address, domain)
 	if err != nil {
-		s.logger.Warn("save FakeIP cache: ", err)
+		return netip.Addr{}, E.Cause(err, "save fakeip mapping")
 	}
-	s.storage.FakeIPSaveMetadataAsync(&adapter.FakeIPMetadata{
-		Inet4Range:   s.inet4Range,
-		Inet6Range:   s.inet6Range,
-		Inet4Current: s.inet4Current,
-		Inet6Current: s.inet6Current,
-	})
 	return address, nil
 }
 
