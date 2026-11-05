@@ -64,6 +64,11 @@ func UTP(_ context.Context, metadata *adapter.InboundContext, packet []byte) err
 	if version != 1 || ty > 4 {
 		return os.ErrInvalid
 	}
+	// A WireGuard handshake initiation (type 1, three reserved zero
+	// bytes, 148 bytes) also reads as a uTP ST_DATA header.
+	if isWireGuardInitiation(packet) {
+		return os.ErrInvalid
+	}
 
 	// Validate the extensions
 	extension := packet[1]
@@ -88,6 +93,11 @@ func UTP(_ context.Context, metadata *adapter.InboundContext, packet []byte) err
 	}
 	metadata.Protocol = C.ProtocolBitTorrent
 	return nil
+}
+
+func isWireGuardInitiation(packet []byte) bool {
+	return len(packet) == 148 && packet[0] == 0x01 &&
+		packet[1] == 0 && packet[2] == 0 && packet[3] == 0
 }
 
 // UDPTracker detects if the packet is a UDP Tracker Protocol packet.
