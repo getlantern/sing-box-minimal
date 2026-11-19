@@ -140,6 +140,9 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	var echConfigList []byte
 	var echQueryServerName string
 	if options.TLS.ECH != nil && options.TLS.ECH.Enabled {
+		if options.TLS.ECH.OuterServerName != "" {
+			return nil, E.New("ech.outer_server_name is unsupported in naive outbound")
+		}
 		echEnabled = true
 		echQueryServerName = options.TLS.ECH.QueryServerName
 		var echConfig []byte
