@@ -246,6 +246,9 @@ func newSTDClient(ctx context.Context, logger logger.ContextLogger, serverAddres
 	}
 	config.SetServerName(serverName)
 	if options.ECH != nil && options.ECH.Enabled {
+		if options.ECH.OuterServerName != "" {
+			return nil, E.New("ech.outer_server_name requires utls")
+		}
 		var err error
 		config, err = parseECHClientConfig(ctx, config.(ECHCapableConfig), options)
 		if err != nil {

@@ -6,9 +6,11 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"math/rand"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -27,7 +29,10 @@ import (
 )
 
 type UTLSClientConfig struct {
-	ctx                   context.Context
+	ctx context.Context
+	// echAccess guards config.EncryptedClientHelloConfigList, which an ECH
+	// retry replaces while other dials clone config.
+	echAccess             sync.RWMutex
 	config                *utls.Config
 	serverName            string
 	disableSNI            bool
@@ -90,7 +95,10 @@ func (c *UTLSClientConfig) Client(conn net.Conn) (Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &utlsALPNWrapper{utlsConnWrapper{utls.UClient(conn, c.config.Clone(), c.id)}, c.config.NextProtos}, nil
+	c.echAccess.RLock()
+	config := c.config.Clone()
+	c.echAccess.RUnlock()
+	return &utlsALPNWrapper{utlsConnWrapper{utls.UClient(conn, config, c.id)}, config.NextProtos}, nil
 }
 
 func (c *UTLSClientConfig) SetSessionIDGenerator(generator func(clientHello []byte, sessionID []byte) error) {
@@ -98,9 +106,12 @@ func (c *UTLSClientConfig) SetSessionIDGenerator(generator func(clientHello []by
 }
 
 func (c *UTLSClientConfig) Clone() Config {
+	c.echAccess.RLock()
+	config := c.config.Clone()
+	c.echAccess.RUnlock()
 	cloned := &UTLSClientConfig{
 		ctx:                   c.ctx,
-		config:                c.config.Clone(),
+		config:                config,
 		serverName:            c.serverName,
 		disableSNI:            c.disableSNI,
 		verifyServerName:      c.verifyServerName,
@@ -117,10 +128,14 @@ func (c *UTLSClientConfig) Clone() Config {
 }
 
 func (c *UTLSClientConfig) ECHConfigList() []byte {
+	c.echAccess.RLock()
+	defer c.echAccess.RUnlock()
 	return c.config.EncryptedClientHelloConfigList
 }
 
 func (c *UTLSClientConfig) SetECHConfigList(EncryptedClientHelloConfigList []byte) {
+	c.echAccess.Lock()
+	defer c.echAccess.Unlock()
 	c.config.EncryptedClientHelloConfigList = EncryptedClientHelloConfigList
 }
 
@@ -144,6 +159,7 @@ func (c *utlsConnWrapper) ConnectionState() tls.ConnectionState {
 		SignedCertificateTimestamps: state.SignedCertificateTimestamps,
 		OCSPResponse:                state.OCSPResponse,
 		TLSUnique:                   state.TLSUnique,
+		ECHAccepted:                 state.ECHAccepted,
 	}
 }
 
@@ -181,7 +197,13 @@ func (c *utlsALPNWrapper) HandshakeContext(ctx context.Context) error {
 			}
 		}
 	}
-	return c.UConn.HandshakeContext(ctx)
+	err := c.UConn.HandshakeContext(ctx)
+	var echErr *utls.ECHRejectionError
+	if errors.As(err, &echErr) {
+		// Surface the stdlib type so the dialer's ECH retry recognizes it.
+		return &tls.ECHRejectionError{RetryConfigList: echErr.RetryConfigList}
+	}
+	return err
 }
 
 func NewUTLSClient(ctx context.Context, logger logger.ContextLogger, serverAddress string, options option.OutboundTLSOptions) (Config, error) {
@@ -326,6 +348,7 @@ func newUTLSClient(ctx context.Context, logger logger.ContextLogger, serverAddre
 		if options.Reality != nil && options.Reality.Enabled {
 			return nil, E.New("Reality is conflict with ECH")
 		}
+		tlsConfig.ECHOuterServerName = options.ECH.OuterServerName
 		config, err = parseECHClientConfig(ctx, config.(ECHCapableConfig), options)
 		if err != nil {
 			return nil, err
