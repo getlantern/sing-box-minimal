@@ -238,7 +238,9 @@ type OutboundECHOptions struct {
 	ConfigPath      string                     `json:"config_path,omitempty"`
 	QueryServerName string                     `json:"query_server_name,omitempty"`
 	// OuterServerName replaces the ECHConfig public_name as the outer SNI.
-	// It requires uTLS.
+	// It requires uTLS. If ECH is rejected, the certificate is verified
+	// against this name and the retry configs are trusted on that basis, so
+	// it must be a name only the ECH provider can serve.
 	OuterServerName string `json:"outer_server_name,omitempty"`
 
 	// Deprecated: not supported by stdlib
